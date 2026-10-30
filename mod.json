@@ -1,49 +1,89 @@
 {
-	"geode": "5.11.2",
-	"gd": {
-		"win": "2.2081",
-		"android": "2.2081",
-		"mac": "2.2081"
-	},
-	"id": "seunome.alternate-assist",
-	"name": "Alternate Assist Mod",
-	"version": "v1.2.1",
-	"developer": "SeuNome",
-	"description": "Ajuda a manter a ship reta enquanto você segura o clique, simulando cliques alternados.",
-	"settings": {
-		"enabled": {
-			"type": "bool",
-			"name": "Ativar assist",
-			"default": true
-		},
-		"mode": {
-			"type": "string",
-			"name": "Modo de ajuda",
-			"description": "Extremo: ship quase 100% reta. Semi: reta com leve oscilação. Pouca: ajuda leve. Custom: usa o CPS abaixo.",
-			"default": "Extremo",
-			"one-of": [
-				"Extremo",
-				"Semi-reto",
-				"Pouca ajuda",
-				"Custom"
-			]
-		},
-		"custom-cps": {
-			"type": "int",
-			"name": "CPS (modo Custom)",
-			"default": 20,
-			"min": 2,
-			"max": 60,
-			"control": {
-				"slider": true,
-				"input": true
-			}
-		},
-		"practice-only": {
-			"type": "bool",
-			"name": "Só no Practice Mode",
-			"description": "Se ligado, o assist só funciona no Practice Mode. Desligado = funciona também no modo normal.",
-			"default": false
-		}
-	}
+  "geode": "5.11.2",
+  "gd": {
+    "win": "2.2081"
+  },
+  "id": "dev.alternateassist.mod",
+  "name": "Alternate Assist Mod",
+  "version": "v0.1.0",
+  "developer": "Alternate Assist Team",
+  "description": "Adaptive Ship flight assistance using rate-limited press/release input pulses. Includes adjustable straightness profiles, custom velocity tolerance, manual-input priority, and optional Player 2 support.",
+  "settings": {
+    "main-header": {
+      "type": "title",
+      "name": "ALTERNATE ASSIST"
+    },
+    "assist-enabled": {
+      "type": "bool",
+      "name": "Enable Ship Assist",
+      "description": "Automatically alternates Ship press/release inputs to keep vertical velocity near the configured target. Disabled by default.",
+      "default": false
+    },
+    "assist-profile": {
+      "type": "string",
+      "name": "Assistance Profile",
+      "description": "Extreme uses a narrow velocity band; Semi and Light allow progressively more vertical drift. Custom uses the Custom Deadzone slider.",
+      "default": "Extreme Straight",
+      "one-of": [
+        "Extreme Straight",
+        "Semi-Straight",
+        "Light Assist",
+        "Custom"
+      ]
+    },
+    "custom-deadzone": {
+      "type": "float",
+      "name": "Custom Deadzone",
+      "description": "Maximum gravity-relative vertical velocity error tolerated before the controller changes the Ship input. Lower values aim for a straighter path but can cause more frequent corrections.",
+      "default": 0.2,
+      "min": 0.05,
+      "max": 3.0,
+      "control": {
+        "slider": true
+      }
+    },
+    "max-cps": {
+      "type": "int",
+      "name": "Maximum CPS",
+      "description": "Caps complete automatic press/release cycles per second. Actual CPS is adaptive and usually lower. Higher values allow faster corrections.",
+      "default": 30,
+      "min": 1,
+      "max": 60,
+      "control": {
+        "slider": true
+      }
+    },
+    "target-vertical-velocity": {
+      "type": "float",
+      "name": "Target Vertical Velocity",
+      "description": "0.0 aims for horizontal flight. Positive/negative values intentionally allow a small average climb or descent in gravity-relative coordinates.",
+      "default": 0.0,
+      "min": -3.0,
+      "max": 3.0,
+      "control": {
+        "slider": true
+      }
+    },
+    "manual-resume-delay": {
+      "type": "float",
+      "name": "Manual Resume Delay",
+      "description": "Delay before automatic corrections resume after a manual release.",
+      "default": 0.12,
+      "min": 0.0,
+      "max": 1.0,
+      "control": {
+        "slider": true
+      }
+    },
+    "player2-header": {
+      "type": "title",
+      "name": "PLAYER 2"
+    },
+    "player2-enabled": {
+      "type": "bool",
+      "name": "Enable Player 2 Assist",
+      "description": "Enables the same Ship controller for Player 2 in dual mode. Disabled by default.",
+      "default": false
+    }
+  }
 }

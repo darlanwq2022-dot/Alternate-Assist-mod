@@ -1,12 +1,10 @@
-# v1.2.1
-- Atualizado para Geode 5 e Geometry Dash 2.2081.
+# Changelog
 
-# v1.2.0
-- Removido o texto/botão na tela durante o level.
-
-# v1.1.0
-- Botão no menu de pausa e no level para trocar o modo.
-- Funciona no modo normal por padrão.
-
-# v1.0.0
-- Primeira versão.
+## v0.1.0
+- Initial Ship-only adaptive assistance controller.
+- Added Extreme Straight, Semi-Straight, Light Assist, and Custom profiles.
+- Added custom velocity deadzone, target vertical velocity, and maximum CPS.
+- Added manual input priority and configurable resume delay.
+- Added optional Player 2 support.
+- Added runtime settings listeners, manual-input priority, and cleanup on death, level reset, and quit.
+- Assistance is disabled by default.
