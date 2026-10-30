@@ -1,13 +1,13 @@
 {
-	"geode": "4.6.0",
+	"geode": "5.11.2",
 	"gd": {
-		"win": "2.2074",
-		"android": "2.2074",
-		"mac": "2.2074"
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081"
 	},
 	"id": "seunome.alternate-assist",
 	"name": "Alternate Assist Mod",
-	"version": "v1.2.0",
+	"version": "v1.2.1",
 	"developer": "SeuNome",
 	"description": "Ajuda a manter a ship reta enquanto você segura o clique, simulando cliques alternados.",
 	"settings": {
