@@ -19,15 +19,24 @@ namespace alternate_assist {
         std::string profile = "Extreme Straight";
         float customDeadzone = 0.20f;
         float targetVelocity = 0.0f;
-        float resumeDelay = 0.12f;
+        float resumeDelay = 0.02f;
+        float manualActivityWindow = 0.24f;
+        float inputAlignment = 0.75f;
         int maxCps = 30;
     };
 
     struct PlayerState {
+        // The input sent to the game is the OR of manualHeld and autoPressed.
+        // This lets manual clicks and assistance pulses share one logical
+        // button without cancelling or double-pressing each other.
         bool autoPressed = false;
         bool manualHeld = false;
         float resumeTimer = 0.0f;
         float toggleTimer = 0.0f;
+        float manualActivityTimer = 0.0f;
+        float localClock = 0.0f;
+        float lastManualPressAt = -1.0f;
+        float manualCadenceHz = 0.0f;
     };
 
     Config g_config;
@@ -46,7 +55,15 @@ namespace alternate_assist {
         return std::clamp(g_config.maxCps, 1, 60);
     }
 
-    void sendInput(PlayLayer* layer, bool down, bool isPlayer1) {
+    float activityWindow() {
+        return std::clamp(g_config.manualActivityWindow, 0.05f, 1.0f);
+    }
+
+    bool effectiveButtonState(PlayerState const& state) {
+        return state.manualHeld || state.autoPressed;
+    }
+
+    void sendAutomaticInput(PlayLayer* layer, bool down, bool isPlayer1) {
         if (!layer) return;
         const bool wasInjecting = g_injectingInput;
         g_injectingInput = true;
@@ -56,15 +73,13 @@ namespace alternate_assist {
 
     void setAutomaticInput(PlayLayer* layer, PlayerState& state, bool down, bool isPlayer1) {
         if (!layer || state.autoPressed == down) return;
-        sendInput(layer, down, isPlayer1);
-        state.autoPressed = down;
+        sendAutomaticInput(layer, down, isPlayer1);
     }
 
     void releaseAutomaticInput(PlayLayer* layer, PlayerState& state, bool isPlayer1) {
         if (layer && state.autoPressed) {
-            sendInput(layer, false, isPlayer1);
+            sendAutomaticInput(layer, false, isPlayer1);
         }
-        state.autoPressed = false;
         state.toggleTimer = 0.0f;
     }
 
@@ -86,48 +101,112 @@ namespace alternate_assist {
         config.customDeadzone = static_cast<float>(mod->getSettingValue<double>("custom-deadzone"));
         config.targetVelocity = static_cast<float>(mod->getSettingValue<double>("target-vertical-velocity"));
         config.resumeDelay = static_cast<float>(mod->getSettingValue<double>("manual-resume-delay"));
+        config.manualActivityWindow = static_cast<float>(mod->getSettingValue<double>("manual-activity-window"));
+        config.inputAlignment = static_cast<float>(mod->getSettingValue<double>("input-alignment"));
         config.maxCps = static_cast<int>(mod->getSettingValue<int64_t>("max-cps"));
         return config;
+    }
+
+    void noteManualInput(PlayerState& state, bool down) {
+        if (down) {
+            // Estimate the user's physical click cadence. It is used as an
+            // additional feedback signal; manual input is never replayed.
+            if (state.lastManualPressAt >= 0.0f) {
+                const float interval = state.localClock - state.lastManualPressAt;
+                if (interval >= 0.008f && interval <= 1.0f) {
+                    const float measuredHz = std::clamp(1.0f / interval, 1.0f, 60.0f);
+                    if (state.manualCadenceHz <= 0.0f) {
+                        state.manualCadenceHz = measuredHz;
+                    } else {
+                        // Smooth noisy human input instead of chasing each edge.
+                        state.manualCadenceHz =
+                            state.manualCadenceHz * 0.65f + measuredHz * 0.35f;
+                    }
+                } else if (interval > 1.0f) {
+                    state.manualCadenceHz = 0.0f;
+                }
+            }
+            state.lastManualPressAt = state.localClock;
+            state.manualActivityTimer = activityWindow();
+            state.resumeTimer = 0.0f;
+
+            // The physical press takes ownership. If an automatic pulse was
+            // down, ownership transfers without sending a duplicate down/up.
+            state.manualHeld = true;
+            state.autoPressed = false;
+        } else {
+            state.manualHeld = false;
+            // Keep assistance armed only for a short period after the latest
+            // real click. Repeated clicking refreshes this timer; idle does not.
+            state.manualActivityTimer = std::max(
+                state.manualActivityTimer,
+                activityWindow()
+            );
+            state.resumeTimer = std::clamp(g_config.resumeDelay, 0.0f, 1.0f);
+        }
     }
 
     void runAssist(PlayerObject* player, PlayerState& state, bool selected, bool isPlayer1, float dt) {
         if (!player) return;
 
         const float safeDt = std::clamp(dt, 0.0f, 0.05f);
+        state.localClock += safeDt;
         state.resumeTimer = std::max(0.0f, state.resumeTimer - safeDt);
         state.toggleTimer = std::max(0.0f, state.toggleTimer - safeDt);
+        state.manualActivityTimer = std::max(0.0f, state.manualActivityTimer - safeDt);
 
-        // Clear stale manual-hold state on death so respawns cannot leave the
-        // controller permanently suspended if the game swallows the key-up.
         if (player->m_isDead) {
             releaseAutomaticInput(g_activeLayer, state, isPlayer1);
             state.manualHeld = false;
+            state.manualActivityTimer = 0.0f;
+            state.manualCadenceHz = 0.0f;
+            state.lastManualPressAt = -1.0f;
             state.resumeTimer = 0.15f;
             return;
         }
 
-        // Never keep an injected hold through a mode change or disable.
+        // Never run in the background: the user must have clicked recently.
         if (!g_config.enabled || !selected || !player->m_isShip) {
             releaseAutomaticInput(g_activeLayer, state, isPlayer1);
+            state.manualActivityTimer = 0.0f;
+            state.manualCadenceHz = 0.0f;
             return;
         }
 
+        // While the physical button is down, it owns the input. Automatic
+        // pulses fill only the gaps between real clicks.
         if (state.manualHeld) {
             releaseAutomaticInput(g_activeLayer, state, isPlayer1);
             return;
         }
 
+        // A single click briefly arms assistance. Continued clicking refreshes
+        // the window; when the user stops, assistance releases and goes idle.
+        if (state.manualActivityTimer <= 0.0f) {
+            releaseAutomaticInput(g_activeLayer, state, isPlayer1);
+            state.manualCadenceHz = 0.0f;
+            return;
+        }
+
         if (state.resumeTimer > 0.0f) return;
 
-        // The ship's thrust opposes gravity. Convert world Y velocity into a
-        // gravity-relative axis so normal and inverted gravity use the same rule.
+        // Gravity-relative velocity makes the rule work for normal/inverted
+        // gravity. The manual cadence tightens the tolerance progressively:
+        // faster real clicks make the controller more precise, not more active
+        // while the user is idle.
         const float gravityDirection = player->m_isUpsideDown ? 1.0f : -1.0f;
         const float gravityRelativeVelocity = player->m_yVelocity * gravityDirection;
         const float error = gravityRelativeVelocity - g_config.targetVelocity;
-        const float deadzone = deadzoneForProfile();
+        const float baseDeadzone = deadzoneForProfile();
+        const float cadenceFactor = std::clamp(state.manualCadenceHz / 18.0f, 0.0f, 1.0f);
+        const float alignment = std::clamp(g_config.inputAlignment, 0.0f, 1.0f);
+        const float deadzone = std::max(
+            0.04f,
+            baseDeadzone * (1.0f - 0.30f * alignment * cadenceFactor)
+        );
 
-        // Hysteresis controller: press while drifting with gravity; release
-        // while moving against gravity. Inside the band, keep the last state.
+        // Hysteresis avoids rapid oscillation. Manual clicks and synthetic
+        // pulses are arbitrated as one button state in handleButton below.
         bool desiredPressed = state.autoPressed;
         if (error > deadzone) {
             desiredPressed = true;
@@ -138,30 +217,8 @@ namespace alternate_assist {
         if (desiredPressed == state.autoPressed || state.toggleTimer > 0.0f) return;
 
         setAutomaticInput(g_activeLayer, state, desiredPressed, isPlayer1);
-
-        // max-cps is complete press/release cycles per second, so each edge is
-        // rate-limited to half that frequency. The 240 Hz game update can honor
-        // up to 60 full cycles/s without frame-based busy loops.
         state.toggleTimer = 1.0f / (2.0f * static_cast<float>(maxCps()));
     }
-
-    void noteManualInput(bool down, bool isPlayer1) {
-        const std::size_t index = isPlayer1 ? 0u : 1u;
-        auto& state = g_players[index];
-
-        if (down) {
-            state.manualHeld = true;
-            state.resumeTimer = 0.0f;
-            // The physical input now owns the held state. Do not send a
-            // compensating release here; that would cancel the player's click.
-            state.autoPressed = false;
-        } else {
-            state.manualHeld = false;
-            state.autoPressed = false;
-            state.resumeTimer = std::clamp(g_config.resumeDelay, 0.0f, 1.0f);
-        }
-    }
-
 }
 
 class $modify(AlternateAssistPlayLayer, PlayLayer) {
@@ -191,15 +248,30 @@ class $modify(AlternateAssistPlayLayer, PlayLayer) {
 
 class $modify(AlternateAssistBaseGameLayer, GJBaseGameLayer) {
     void handleButton(bool down, int button, bool isPlayer1) {
-        GJBaseGameLayer::handleButton(down, button, isPlayer1);
+        auto* activeLayer = alternate_assist::g_activeLayer;
+        const bool isActivePlayLayer = activeLayer &&
+            static_cast<GJBaseGameLayer*>(activeLayer) == this;
 
-        // Button 1 is Geometry Dash's primary jump/Ship input. Record only
-        // real gameplay input routed through the game layer; automatic pulses
-        // use the same route but are marked by g_injectingInput.
-        if (button == 1 && !alternate_assist::g_injectingInput &&
-            alternate_assist::g_activeLayer &&
-            static_cast<GJBaseGameLayer*>(alternate_assist::g_activeLayer) == this) {
-            alternate_assist::noteManualInput(down, isPlayer1);
+        if (button != 1 || !isActivePlayLayer) {
+            GJBaseGameLayer::handleButton(down, button, isPlayer1);
+            return;
+        }
+
+        auto& state = alternate_assist::g_players[isPlayer1 ? 0u : 1u];
+        const bool wasEffective = alternate_assist::effectiveButtonState(state);
+
+        if (alternate_assist::g_injectingInput) {
+            state.autoPressed = down;
+        } else {
+            alternate_assist::noteManualInput(state, down);
+        }
+
+        const bool isEffective = alternate_assist::effectiveButtonState(state);
+        // Forward only effective state transitions. A manual press can take
+        // over an automatic hold, and an automatic release cannot cancel a
+        // physical hold. This is the input-alignment/ownership guarantee.
+        if (wasEffective != isEffective) {
+            GJBaseGameLayer::handleButton(isEffective, button, isPlayer1);
         }
     }
 };
@@ -239,6 +311,8 @@ $on_mod(Loaded) {
         alternate_assist::g_config.enabled = value;
         if (wasEnabled && !value) {
             alternate_assist::releaseAllAutomaticInputs(alternate_assist::g_activeLayer);
+            alternate_assist::g_players[0].manualActivityTimer = 0.0f;
+            alternate_assist::g_players[1].manualActivityTimer = 0.0f;
         }
     });
 
@@ -250,6 +324,7 @@ $on_mod(Loaded) {
                 alternate_assist::g_players[1],
                 false
             );
+            alternate_assist::g_players[1].manualActivityTimer = 0.0f;
         }
     });
 
@@ -269,9 +344,17 @@ $on_mod(Loaded) {
         alternate_assist::g_config.resumeDelay = static_cast<float>(value);
     });
 
+    listenForSettingChanges<double>("manual-activity-window", [](double value) {
+        alternate_assist::g_config.manualActivityWindow = static_cast<float>(value);
+    });
+
+    listenForSettingChanges<double>("input-alignment", [](double value) {
+        alternate_assist::g_config.inputAlignment = static_cast<float>(value);
+    });
+
     listenForSettingChanges<int64_t>("max-cps", [](int64_t value) {
         alternate_assist::g_config.maxCps = static_cast<int>(value);
     });
 
-    log::info("Alternate Assist Mod v0.1.0 loaded. Assistance is disabled by default.");
+    log::info("Alternate Assist Mod v0.1.2 loaded. Assist is gated by recent manual input.");
 }

@@ -5,9 +5,9 @@
   },
   "id": "dev.alternateassist.mod",
   "name": "Alternate Assist Mod",
-  "version": "v0.1.1",
+  "version": "v0.1.2",
   "developer": "Alternate Assist Team",
-  "description": "Adaptive Ship flight assistance using rate-limited press/release input pulses. Includes adjustable straightness profiles, custom velocity tolerance, manual-input priority, and optional Player 2 support.",
+  "description": "Manual-activity-gated adaptive Ship assistance. Synthetic press/release pulses fill gaps between real clicks, align with manual input ownership, and stop when clicking stops.",
   "settings": {
     "main-header": {
       "type": "title",
@@ -16,7 +16,7 @@
     "assist-enabled": {
       "type": "bool",
       "name": "Enable Ship Assist",
-      "description": "Automatically alternates Ship press/release inputs to keep vertical velocity near the configured target. Disabled by default.",
+      "description": "Enables Ship assistance. Assistance only runs during a short window refreshed by your real clicks; it does not autopilot while idle.",
       "default": false
     },
     "assist-profile": {
@@ -67,8 +67,8 @@
     "manual-resume-delay": {
       "type": "float",
       "name": "Manual Resume Delay",
-      "description": "Delay before automatic corrections resume after a manual release.",
-      "default": 0.12,
+      "description": "Delay before automatic corrections can fill the gap after a physical click is released.",
+      "default": 0.02,
       "min": 0.0,
       "max": 1.0,
       "control": {
@@ -84,6 +84,28 @@
       "name": "Enable Player 2 Assist",
       "description": "Enables the same Ship controller for Player 2 in dual mode. Disabled by default.",
       "default": false
+    },
+    "manual-activity-window": {
+      "type": "float",
+      "name": "Manual Activity Window",
+      "description": "How long assistance remains armed after your latest real click. Continued clicking refreshes the window; when you stop clicking, assistance stops.",
+      "default": 0.24,
+      "min": 0.05,
+      "max": 1.0,
+      "control": {
+        "slider": true
+      }
+    },
+    "input-alignment": {
+      "type": "float",
+      "name": "Manual Click Alignment",
+      "description": "Uses your recent click cadence to tighten the velocity tolerance as you click faster. Manual clicks always take priority and are never cancelled by automatic pulses.",
+      "default": 0.75,
+      "min": 0.0,
+      "max": 1.0,
+      "control": {
+        "slider": true
+      }
     }
   }
 }
