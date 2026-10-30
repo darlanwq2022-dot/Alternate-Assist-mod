@@ -1,0 +1,142 @@
+# Builds Nova for Windows, macOS, Android (32 + 64 bit) and iOS on GitHub's
+# servers and combines them into ONE .geode that works on all of them.
+# Push the project to a GitHub repo -> Actions tab -> "Build Geode Mod" ->
+# the finished .geode is under "Artifacts" (Build Output).
+# On the main branch it also makes a GitHub release named after the version in
+# mod.json (e.g. v2.3.0) with the .geode attached - once per version, so bump
+# the version to release again. The mod's Update button downloads the newest
+# release.
+name: Build Geode Mod
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+          - name: Android32
+            os: ubuntu-latest
+            target: Android32
+          - name: Android64
+            os: ubuntu-latest
+            target: Android64
+          - name: iOS
+            os: macos-latest
+            target: iOS
+
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # iOS: Geode's newest bindings forget to include fmod.hpp in the generated
+      # FMOD::Sound source on iOS ("incomplete type 'FMOD::Sound'"). Use a copy of
+      # the bindings with that include added. Not our code - remove this step
+      # once Geode fixes it upstream.
+      - name: Patch Geode bindings (iOS)
+        if: matrix.config.target == 'iOS'
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/geode-sdk/bindings "$RUNNER_TEMP/bindings-repo"
+          f="$RUNNER_TEMP/bindings-repo/bindings/2.2081/FMOD.bro"
+          { echo '#import ios <fmod.hpp>'; cat "$f"; } > "$f.new" && mv "$f.new" "$f"
+          head -3 "$f"
+          echo "GEODE_BINDINGS_REPO_PATH=$RUNNER_TEMP/bindings-repo" >> "$GITHUB_ENV"
+
+      # src/OnlineURL.hpp is private (not on GitHub): made here from the
+      # NOVA_ONLINE_URL secret (Settings -> Secrets and variables -> Actions).
+      # No secret = the online count stays hidden in that build.
+      - name: Online counter URL (private)
+        shell: bash
+        env:
+          NOVA_ONLINE_URL: ${{ secrets.NOVA_ONLINE_URL }}
+        run: |
+          if [ ! -f src/OnlineURL.hpp ]; then
+            printf '#pragma once\nconstexpr char const* ONLINE_URL = "%s";\n' "$NOVA_ONLINE_URL" > src/OnlineURL.hpp
+          fi
+
+      - name: Build the mod
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          combine: true
+          target: ${{ matrix.config.target }}
+
+      # If a build fails, rebuild just the failing part and post its error
+      # lines as an annotation (readable on the run page without opening logs).
+      - name: Show build errors
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f build/build.ninja ]; then
+            cmake --build build -- -k 0 > errlog.txt 2>&1 || true
+          else
+            { echo "CMake configure failed:"; tail -n 60 build/CMakeFiles/CMakeConfigureLog.yaml 2>/dev/null; } > errlog.txt
+          fi
+          grep -n -E -B2 -A4 "error|Error|undefined|ld:|FAILED" errlog.txt | head -n 120 > errs.txt || true
+          [ -s errs.txt ] || tail -n 80 errlog.txt > errs.txt
+          msg=$(sed -e 's/%/%25/g' -e 's/\r/%0D/g' errs.txt | awk '{printf "%s%%0A", $0}')
+          echo "::error title=${{ matrix.config.name }} build errors::$msg"
+          exit 1
+
+  package:
+    name: Package builds
+    runs-on: ubuntu-latest
+    needs: ['build']
+    permissions:
+      contents: write   # to make the release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: geode-sdk/build-geode-mod/combine@main
+        id: build
+
+      # Lists what is inside the combined .geode, so a missing platform binary
+      # (the "No binary could be found for current platform" error on a phone)
+      # shows up right here in the log. Only warns - it never fails the build.
+      - name: Check the package has every platform
+        continue-on-error: true
+        shell: bash
+        run: |
+          p="${{ steps.build.outputs.build-output }}"
+          if [ -d "$p" ]; then f=$(ls "$p"/*.geode 2>/dev/null | head -n 1); else f="$p"; fi
+          echo "package: $f"
+          unzip -l "$f" || exit 0
+          for bin in alquerez.nova.dll alquerez.nova.dylib alquerez.nova.ios.dylib alquerez.nova.android32.so alquerez.nova.android64.so; do
+            unzip -l "$f" | grep -qF " $bin" || echo "::warning title=Missing binary::$bin is not in the package"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Build Output
+          path: ${{ steps.build.outputs.build-output }}
+
+      # One release per version: the tag is mod.json's "version". Already
+      # released -> skipped (pushes without a version bump don't release).
+      # The notes are that version's section of changelog.md.
+      - name: Release
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver=$(python3 -c "import json; print(json.load(open('mod.json'))['version'])")
+          if gh release view "$ver" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$ver is already released - bump the version in mod.json to release again"
+            exit 0
+          fi
+          p="${{ steps.build.outputs.build-output }}"
+          if [ -d "$p" ]; then f=$(ls "$p"/*.geode | head -n 1); else f="$p"; fi
+          cp "$f" alquerez.nova.geode
+          gh release create "$ver" alquerez.nova.geode -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Nova $ver" --notes ""
