@@ -1,4 +1,4 @@
-# Alternate Assist Mod v0.1.0
+# Alternate Assist Mod v0.1.1
 
 An adjustable Geometry Dash Ship flight-assistance mod for Geode 5.11.2 / GD 2.2081 (Windows).
 
@@ -43,3 +43,8 @@ Target: Windows, Geometry Dash 2.2081, Geode 5.11.2.
 - This is a feedback controller, not a perfect trajectory solver. The result depends on game speed, gravity, ship size, physics tick timing, and the level's conditions. Tune the deadzone and CPS in-game.
 - Rotated gameplay / nonstandard gravity transforms need separate in-game verification.
 - No compiled `.geode` binary is included; the source package must be built with the user's Geode SDK.
+
+
+## v0.1.1 build fix
+
+Geode 5.x requires an explicit template type for `listenForSettingChanges<T>`. All seven setting listeners now specify the exact value type declared by `mod.json`.

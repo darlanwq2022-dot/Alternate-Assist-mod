@@ -1,10 +1,9 @@
 # Changelog
 
+## v0.1.1 - Build fix
+- Fixed Geode 5.11 setting listeners by explicitly specifying each setting's value type.
+- Boolean settings use `bool`; the profile uses `std::string`; float settings use `double`; the integer CPS setting uses `int64_t`.
+- No controller behavior or gameplay input logic was intentionally changed.
+
 ## v0.1.0
-- Initial Ship-only adaptive assistance controller.
-- Added Extreme Straight, Semi-Straight, Light Assist, and Custom profiles.
-- Added custom velocity deadzone, target vertical velocity, and maximum CPS.
-- Added manual input priority and configurable resume delay.
-- Added optional Player 2 support.
-- Added runtime settings listeners, manual-input priority, and cleanup on death, level reset, and quit.
-- Assistance is disabled by default.
+- Initial adaptive Ship assistance implementation.

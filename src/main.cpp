@@ -234,7 +234,7 @@ class $modify(AlternateAssistPlayerObject, PlayerObject) {
 $on_mod(Loaded) {
     alternate_assist::g_config = alternate_assist::readConfig();
 
-    listenForSettingChanges("assist-enabled", [](bool value) {
+    listenForSettingChanges<bool>("assist-enabled", [](bool value) {
         const bool wasEnabled = alternate_assist::g_config.enabled;
         alternate_assist::g_config.enabled = value;
         if (wasEnabled && !value) {
@@ -242,7 +242,7 @@ $on_mod(Loaded) {
         }
     });
 
-    listenForSettingChanges("player2-enabled", [](bool value) {
+    listenForSettingChanges<bool>("player2-enabled", [](bool value) {
         alternate_assist::g_config.player2Enabled = value;
         if (!value && alternate_assist::g_activeLayer) {
             alternate_assist::releaseAutomaticInput(
@@ -253,23 +253,23 @@ $on_mod(Loaded) {
         }
     });
 
-    listenForSettingChanges("assist-profile", [](std::string value) {
+    listenForSettingChanges<std::string>("assist-profile", [](std::string value) {
         alternate_assist::g_config.profile = std::move(value);
     });
 
-    listenForSettingChanges("custom-deadzone", [](double value) {
+    listenForSettingChanges<double>("custom-deadzone", [](double value) {
         alternate_assist::g_config.customDeadzone = static_cast<float>(value);
     });
 
-    listenForSettingChanges("target-vertical-velocity", [](double value) {
+    listenForSettingChanges<double>("target-vertical-velocity", [](double value) {
         alternate_assist::g_config.targetVelocity = static_cast<float>(value);
     });
 
-    listenForSettingChanges("manual-resume-delay", [](double value) {
+    listenForSettingChanges<double>("manual-resume-delay", [](double value) {
         alternate_assist::g_config.resumeDelay = static_cast<float>(value);
     });
 
-    listenForSettingChanges("max-cps", [](int64_t value) {
+    listenForSettingChanges<int64_t>("max-cps", [](int64_t value) {
         alternate_assist::g_config.maxCps = static_cast<int>(value);
     });
 

@@ -5,7 +5,7 @@
   },
   "id": "dev.alternateassist.mod",
   "name": "Alternate Assist Mod",
-  "version": "v0.1.0",
+  "version": "v0.1.1",
   "developer": "Alternate Assist Team",
   "description": "Adaptive Ship flight assistance using rate-limited press/release input pulses. Includes adjustable straightness profiles, custom velocity tolerance, manual-input priority, and optional Player 2 support.",
   "settings": {
