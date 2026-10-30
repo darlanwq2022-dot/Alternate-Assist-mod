@@ -1,0 +1,49 @@
+{
+	"geode": "4.6.0",
+	"gd": {
+		"win": "2.2074",
+		"android": "2.2074",
+		"mac": "2.2074"
+	},
+	"id": "seunome.alternate-assist",
+	"name": "Alternate Assist Mod",
+	"version": "v1.2.0",
+	"developer": "SeuNome",
+	"description": "Ajuda a manter a ship reta enquanto você segura o clique, simulando cliques alternados.",
+	"settings": {
+		"enabled": {
+			"type": "bool",
+			"name": "Ativar assist",
+			"default": true
+		},
+		"mode": {
+			"type": "string",
+			"name": "Modo de ajuda",
+			"description": "Extremo: ship quase 100% reta. Semi: reta com leve oscilação. Pouca: ajuda leve. Custom: usa o CPS abaixo.",
+			"default": "Extremo",
+			"one-of": [
+				"Extremo",
+				"Semi-reto",
+				"Pouca ajuda",
+				"Custom"
+			]
+		},
+		"custom-cps": {
+			"type": "int",
+			"name": "CPS (modo Custom)",
+			"default": 20,
+			"min": 2,
+			"max": 60,
+			"control": {
+				"slider": true,
+				"input": true
+			}
+		},
+		"practice-only": {
+			"type": "bool",
+			"name": "Só no Practice Mode",
+			"description": "Se ligado, o assist só funciona no Practice Mode. Desligado = funciona também no modo normal.",
+			"default": false
+		}
+	}
+}
