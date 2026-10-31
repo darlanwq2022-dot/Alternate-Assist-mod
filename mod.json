@@ -5,9 +5,9 @@
   },
   "id": "dev.alternateassist.mod",
   "name": "Alternate Assist Mod",
-  "version": "v0.1.2",
+  "version": "v0.1.3",
   "developer": "Alternate Assist Team",
-  "description": "Manual-activity-gated adaptive Ship assistance. Synthetic press/release pulses fill gaps between real clicks, align with manual input ownership, and stop when clicking stops.",
+  "description": "Manual-activated adaptive Ship stabilizer. Captures manual clicks while in Ship mode, then controls press/release from vertical-velocity feedback. Straightness and click-cadence alignment are configurable.",
   "settings": {
     "main-header": {
       "type": "title",
@@ -16,28 +16,16 @@
     "assist-enabled": {
       "type": "bool",
       "name": "Enable Ship Assist",
-      "description": "Enables Ship assistance. Assistance only runs during a short window refreshed by your real clicks; it does not autopilot while idle.",
+      "description": "When enabled in Ship mode, your clicks arm the stabilizer. The controller then manages press/release to keep vertical velocity near the selected target. It disengages after the activity window expires.",
       "default": false
     },
-    "assist-profile": {
-      "type": "string",
-      "name": "Assistance Profile",
-      "description": "Extreme uses a narrow velocity band; Semi and Light allow progressively more vertical drift. Custom uses the Custom Deadzone slider.",
-      "default": "Extreme Straight",
-      "one-of": [
-        "Extreme Straight",
-        "Semi-Straight",
-        "Light Assist",
-        "Custom"
-      ]
-    },
-    "custom-deadzone": {
+    "straightness": {
       "type": "float",
-      "name": "Custom Deadzone",
-      "description": "Maximum gravity-relative vertical velocity error tolerated before the controller changes the Ship input. Lower values aim for a straighter path but can cause more frequent corrections.",
-      "default": 0.2,
-      "min": 0.05,
-      "max": 3.0,
+      "name": "Straightness",
+      "description": "Main control. 0 = loose correction, 100 = extremely tight horizontal-velocity correction. Higher values shrink the vertical-velocity deadzone directly.",
+      "default": 95.0,
+      "min": 0.0,
+      "max": 100.0,
       "control": {
         "slider": true
       }
@@ -45,10 +33,10 @@
     "max-cps": {
       "type": "int",
       "name": "Maximum CPS",
-      "description": "Caps complete automatic press/release cycles per second. Actual CPS is adaptive and usually lower. Higher values allow faster corrections.",
-      "default": 30,
+      "description": "Maximum complete automatic press/release cycles per second. Higher values allow faster correction; physics updates still set the real limit.",
+      "default": 120,
       "min": 1,
-      "max": 60,
+      "max": 120,
       "control": {
         "slider": true
       }
@@ -56,7 +44,7 @@
     "target-vertical-velocity": {
       "type": "float",
       "name": "Target Vertical Velocity",
-      "description": "0.0 aims for horizontal flight. Positive/negative values intentionally allow a small average climb or descent in gravity-relative coordinates.",
+      "description": "Target gravity-relative vertical velocity. 0 targets horizontal flight; positive/negative values allow a controlled slow drift.",
       "default": 0.0,
       "min": -3.0,
       "max": 3.0,
@@ -64,13 +52,35 @@
         "slider": true
       }
     },
-    "manual-resume-delay": {
+    "manual-activity-window": {
       "type": "float",
-      "name": "Manual Resume Delay",
-      "description": "Delay before automatic corrections can fill the gap after a physical click is released.",
-      "default": 0.02,
+      "name": "Manual Activity Window",
+      "description": "How long stabilization remains armed after your latest physical click. Holding the button keeps it active; when you stop clicking and release, it disengages after this window.",
+      "default": 0.32,
+      "min": 0.05,
+      "max": 1.0,
+      "control": {
+        "slider": true
+      }
+    },
+    "input-alignment": {
+      "type": "float",
+      "name": "Manual Click Alignment",
+      "description": "How strongly faster manual click cadence tightens the velocity deadzone. At 100%, fast clicking can tighten the correction threshold by up to 42%.",
+      "default": 1.0,
       "min": 0.0,
       "max": 1.0,
+      "control": {
+        "slider": true
+      }
+    },
+    "manual-resume-delay": {
+      "type": "float",
+      "name": "Correction Resume Delay",
+      "description": "Optional pause after a physical release before the controller resumes corrections. 0 gives immediate correction.",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 0.25,
       "control": {
         "slider": true
       }
@@ -82,30 +92,18 @@
     "player2-enabled": {
       "type": "bool",
       "name": "Enable Player 2 Assist",
-      "description": "Enables the same Ship controller for Player 2 in dual mode. Disabled by default.",
+      "description": "Enables the same controller for Player 2 in dual mode. Disabled by default.",
       "default": false
     },
-    "manual-activity-window": {
-      "type": "float",
-      "name": "Manual Activity Window",
-      "description": "How long assistance remains armed after your latest real click. Continued clicking refreshes the window; when you stop clicking, assistance stops.",
-      "default": 0.24,
-      "min": 0.05,
-      "max": 1.0,
-      "control": {
-        "slider": true
-      }
+    "diagnostics-header": {
+      "type": "title",
+      "name": "DIAGNOSTICS"
     },
-    "input-alignment": {
-      "type": "float",
-      "name": "Manual Click Alignment",
-      "description": "Uses your recent click cadence to tighten the velocity tolerance as you click faster. Manual clicks always take priority and are never cancelled by automatic pulses.",
-      "default": 0.75,
-      "min": 0.0,
-      "max": 1.0,
-      "control": {
-        "slider": true
-      }
+    "debug-telemetry": {
+      "type": "bool",
+      "name": "Debug Controller Telemetry",
+      "description": "Logs measured and predicted vertical velocity, effective deadzone, controller output, measured manual CPS, Straightness, and estimated acceleration.",
+      "default": false
     }
   }
 }

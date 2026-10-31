@@ -6,9 +6,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
-#include <string>
-#include <utility>
 
 using namespace geode::prelude;
 
@@ -16,80 +15,148 @@ namespace alternate_assist {
     struct Config {
         bool enabled = false;
         bool player2Enabled = false;
-        std::string profile = "Extreme Straight";
-        float customDeadzone = 0.20f;
+        bool debugTelemetry = false;
+        float straightness = 95.0f;
         float targetVelocity = 0.0f;
-        float resumeDelay = 0.02f;
-        float manualActivityWindow = 0.24f;
-        float inputAlignment = 0.75f;
-        int maxCps = 30;
+        float resumeDelay = 0.0f;
+        float manualActivityWindow = 0.32f;
+        float inputAlignment = 1.0f;
+        int maxCps = 120;
     };
 
     struct PlayerState {
-        // The input sent to the game is the OR of manualHeld and autoPressed.
-        // This lets manual clicks and assistance pulses share one logical
-        // button without cancelling or double-pressing each other.
-        bool autoPressed = false;
+        // outputPressed is the button state currently sent to Geometry Dash.
+        // manualHeld only records the user's physical hold; it does not force
+        // thrust. The controller chooses the final button state from velocity.
+        bool outputPressed = false;
         bool manualHeld = false;
-        float resumeTimer = 0.0f;
-        float toggleTimer = 0.0f;
-        float manualActivityTimer = 0.0f;
+        bool controllerOwned = false;
+
         float localClock = 0.0f;
+        float activityTimer = 0.0f;
+        float resumeTimer = 0.0f;
+        float transitionCooldown = 0.0f;
+        float telemetryTimer = 0.0f;
+
         float lastManualPressAt = -1.0f;
         float manualCadenceHz = 0.0f;
+
+        float lastGravityRelativeVelocity = 0.0f;
+        float estimatedAcceleration = 0.0f;
+        bool hasVelocitySample = false;
+        bool lastUpsideDown = false;
     };
 
     Config g_config;
     std::array<PlayerState, 2> g_players{};
     PlayLayer* g_activeLayer = nullptr;
     bool g_injectingInput = false;
+    bool g_restoringManualInput = false;
 
-    float deadzoneForProfile() {
-        if (g_config.profile == "Extreme Straight") return 0.18f;
-        if (g_config.profile == "Semi-Straight") return 0.62f;
-        if (g_config.profile == "Light Assist") return 1.35f;
-        return std::clamp(g_config.customDeadzone, 0.05f, 3.0f);
+    float straightness01() {
+        return std::clamp(g_config.straightness, 0.0f, 100.0f) / 100.0f;
     }
 
     int maxCps() {
-        return std::clamp(g_config.maxCps, 1, 60);
+        return std::clamp(g_config.maxCps, 1, 120);
     }
 
     float activityWindow() {
         return std::clamp(g_config.manualActivityWindow, 0.05f, 1.0f);
     }
 
-    bool effectiveButtonState(PlayerState const& state) {
-        return state.manualHeld || state.autoPressed;
+    float gravityRelativeVelocity(PlayerObject* player) {
+        if (!player) return 0.0f;
+        // In normal gravity negative Y is falling; inverted gravity reverses it.
+        // Positive therefore always means motion in the direction of gravity.
+        const float gravitySign = player->m_isUpsideDown ? 1.0f : -1.0f;
+        return static_cast<float>(player->m_yVelocity) * gravitySign;
     }
 
-    void sendAutomaticInput(PlayLayer* layer, bool down, bool isPlayer1) {
+    float baseVelocityDeadzone() {
+        // Direct Straightness mapping:
+        //   0   -> forgiving threshold (~1.18)
+        //   50  -> medium threshold (~0.47)
+        //   90  -> tight threshold (~0.08)
+        //   100 -> very tight threshold (0.03)
+        const float remaining = 1.0f - straightness01();
+        return 0.03f + 1.15f * std::pow(remaining, 1.4f);
+    }
+
+    float effectiveVelocityDeadzone(PlayerState const& state) {
+        const float cadence = std::clamp(state.manualCadenceHz / 30.0f, 0.0f, 1.0f);
+        const float alignment = std::clamp(g_config.inputAlignment, 0.0f, 1.0f);
+        // Faster real clicks tighten the threshold by up to 42%.
+        const float cadenceTightening = 0.42f * alignment * cadence;
+        return std::max(0.012f, baseVelocityDeadzone() * (1.0f - cadenceTightening));
+    }
+
+    void sendControllerInput(PlayLayer* layer, bool down, bool isPlayer1) {
         if (!layer) return;
-        const bool wasInjecting = g_injectingInput;
+        const bool previousInjecting = g_injectingInput;
+        const bool previousRestoring = g_restoringManualInput;
         g_injectingInput = true;
+        g_restoringManualInput = false;
         layer->handleButton(down, 1, isPlayer1);
-        g_injectingInput = wasInjecting;
+        g_restoringManualInput = previousRestoring;
+        g_injectingInput = previousInjecting;
     }
 
-    void setAutomaticInput(PlayLayer* layer, PlayerState& state, bool down, bool isPlayer1) {
-        if (!layer || state.autoPressed == down) return;
-        sendAutomaticInput(layer, down, isPlayer1);
+    void restoreManualHeldInput(PlayLayer* layer, bool isPlayer1) {
+        if (!layer) return;
+        const bool previousInjecting = g_injectingInput;
+        const bool previousRestoring = g_restoringManualInput;
+        g_injectingInput = true;
+        g_restoringManualInput = true;
+        layer->handleButton(true, 1, isPlayer1);
+        g_restoringManualInput = previousRestoring;
+        g_injectingInput = previousInjecting;
     }
 
-    void releaseAutomaticInput(PlayLayer* layer, PlayerState& state, bool isPlayer1) {
-        if (layer && state.autoPressed) {
-            sendAutomaticInput(layer, false, isPlayer1);
+    void setControllerOutput(PlayLayer* layer, PlayerState& state, bool down, bool isPlayer1) {
+        if (!layer || state.outputPressed == down) return;
+        sendControllerInput(layer, down, isPlayer1);
+    }
+
+    void releaseControllerOutput(PlayLayer* layer, PlayerState& state, bool isPlayer1) {
+        if (layer && state.outputPressed) {
+            sendControllerInput(layer, false, isPlayer1);
+        } else if (!layer) {
+            state.outputPressed = false;
         }
-        state.toggleTimer = 0.0f;
+        state.transitionCooldown = 0.0f;
     }
 
-    void releaseAllAutomaticInputs(PlayLayer* layer) {
-        releaseAutomaticInput(layer, g_players[0], true);
-        releaseAutomaticInput(layer, g_players[1], false);
+    void relinquishController(PlayLayer* layer, PlayerState& state, bool isPlayer1, bool restoreHeldInput) {
+        const bool wasManuallyHeld = state.manualHeld;
+        releaseControllerOutput(layer, state, isPlayer1);
+        state.controllerOwned = false;
+        state.activityTimer = 0.0f;
+        state.resumeTimer = 0.0f;
+        state.manualCadenceHz = 0.0f;
+        state.lastManualPressAt = -1.0f;
+        state.hasVelocitySample = false;
+        state.estimatedAcceleration = 0.0f;
+
+        // If assist is disabled or a portal leaves Ship mode during a physical
+        // hold, restore the user's normal held input instead of swallowing it.
+        if (restoreHeldInput && wasManuallyHeld && layer) {
+            // Restore the physical hold to vanilla gameplay, but do not mark it
+            // as controller-owned output. This prevents a per-physics-step
+            // release/restore loop after leaving Ship mode or disabling assist.
+            restoreManualHeldInput(layer, isPlayer1);
+        } else if (!restoreHeldInput) {
+            state.manualHeld = false;
+        }
     }
 
     void resetPlayerStates() {
         g_players = {};
+    }
+
+    void releaseAllControllerOutputs(PlayLayer* layer) {
+        releaseControllerOutput(layer, g_players[0], true);
+        releaseControllerOutput(layer, g_players[1], false);
     }
 
     Config readConfig() {
@@ -97,8 +164,8 @@ namespace alternate_assist {
         Config config;
         config.enabled = mod->getSettingValue<bool>("assist-enabled");
         config.player2Enabled = mod->getSettingValue<bool>("player2-enabled");
-        config.profile = mod->getSettingValue<std::string>("assist-profile");
-        config.customDeadzone = static_cast<float>(mod->getSettingValue<double>("custom-deadzone"));
+        config.debugTelemetry = mod->getSettingValue<bool>("debug-telemetry");
+        config.straightness = static_cast<float>(mod->getSettingValue<double>("straightness"));
         config.targetVelocity = static_cast<float>(mod->getSettingValue<double>("target-vertical-velocity"));
         config.resumeDelay = static_cast<float>(mod->getSettingValue<double>("manual-resume-delay"));
         config.manualActivityWindow = static_cast<float>(mod->getSettingValue<double>("manual-activity-window"));
@@ -108,116 +175,163 @@ namespace alternate_assist {
     }
 
     void noteManualInput(PlayerState& state, bool down) {
+        // Ignore duplicate edges; only a fresh physical down edge counts as a click.
+        if (down == state.manualHeld) return;
+
         if (down) {
-            // Estimate the user's physical click cadence. It is used as an
-            // additional feedback signal; manual input is never replayed.
             if (state.lastManualPressAt >= 0.0f) {
                 const float interval = state.localClock - state.lastManualPressAt;
                 if (interval >= 0.008f && interval <= 1.0f) {
-                    const float measuredHz = std::clamp(1.0f / interval, 1.0f, 60.0f);
+                    const float measuredHz = std::clamp(1.0f / interval, 1.0f, 120.0f);
                     if (state.manualCadenceHz <= 0.0f) {
                         state.manualCadenceHz = measuredHz;
                     } else {
-                        // Smooth noisy human input instead of chasing each edge.
-                        state.manualCadenceHz =
-                            state.manualCadenceHz * 0.65f + measuredHz * 0.35f;
+                        state.manualCadenceHz = state.manualCadenceHz * 0.55f + measuredHz * 0.45f;
                     }
                 } else if (interval > 1.0f) {
                     state.manualCadenceHz = 0.0f;
                 }
             }
             state.lastManualPressAt = state.localClock;
-            state.manualActivityTimer = activityWindow();
-            state.resumeTimer = 0.0f;
-
-            // The physical press takes ownership. If an automatic pulse was
-            // down, ownership transfers without sending a duplicate down/up.
             state.manualHeld = true;
-            state.autoPressed = false;
+            state.activityTimer = activityWindow();
+            state.resumeTimer = 0.0f;
+            state.controllerOwned = true;
         } else {
             state.manualHeld = false;
-            // Keep assistance armed only for a short period after the latest
-            // real click. Repeated clicking refreshes this timer; idle does not.
-            state.manualActivityTimer = std::max(
-                state.manualActivityTimer,
-                activityWindow()
-            );
-            state.resumeTimer = std::clamp(g_config.resumeDelay, 0.0f, 1.0f);
+            // Keep the stabilizer armed briefly after the last click. Repeated
+            // clicks continually refresh the window; idle eventually disengages.
+            state.activityTimer = std::max(state.activityTimer, activityWindow());
+            state.resumeTimer = std::clamp(g_config.resumeDelay, 0.0f, 0.20f);
         }
     }
 
-    void runAssist(PlayerObject* player, PlayerState& state, bool selected, bool isPlayer1, float dt) {
-        if (!player) return;
+    void observePostPhysics(PlayerObject* player, PlayerState& state, float dt) {
+        if (!player || !player->m_isShip || player->m_isDead) {
+            state.hasVelocitySample = false;
+            state.estimatedAcceleration = 0.0f;
+            return;
+        }
+
+        const float safeDt = std::clamp(dt, 0.0f, 0.05f);
+        if (safeDt <= 0.00001f) return;
+
+        const bool upsideDown = player->m_isUpsideDown;
+        const float velocity = gravityRelativeVelocity(player);
+        if (state.hasVelocitySample && upsideDown == state.lastUpsideDown) {
+            const float rawAcceleration = (velocity - state.lastGravityRelativeVelocity) / safeDt;
+            // Discard discontinuities from portals, collisions and velocity resets.
+            if (std::fabs(rawAcceleration) <= 36.0f) {
+                const float alpha = std::clamp(safeDt * 24.0f, 0.04f, 0.40f);
+                state.estimatedAcceleration += (rawAcceleration - state.estimatedAcceleration) * alpha;
+            } else {
+                state.estimatedAcceleration = 0.0f;
+            }
+        } else {
+            state.estimatedAcceleration = 0.0f;
+        }
+
+        state.lastGravityRelativeVelocity = velocity;
+        state.lastUpsideDown = upsideDown;
+        state.hasVelocitySample = true;
+    }
+
+    void runControllerBeforePhysics(PlayerObject* player, PlayerState& state, bool selected, bool isPlayer1, float dt) {
+        auto* layer = g_activeLayer;
+        if (!player || !layer) return;
 
         const float safeDt = std::clamp(dt, 0.0f, 0.05f);
         state.localClock += safeDt;
+        state.activityTimer = std::max(0.0f, state.activityTimer - safeDt);
         state.resumeTimer = std::max(0.0f, state.resumeTimer - safeDt);
-        state.toggleTimer = std::max(0.0f, state.toggleTimer - safeDt);
-        state.manualActivityTimer = std::max(0.0f, state.manualActivityTimer - safeDt);
+        state.transitionCooldown = std::max(0.0f, state.transitionCooldown - safeDt);
+        state.telemetryTimer = std::max(0.0f, state.telemetryTimer - safeDt);
 
         if (player->m_isDead) {
-            releaseAutomaticInput(g_activeLayer, state, isPlayer1);
+            if (state.controllerOwned) {
+                relinquishController(layer, state, isPlayer1, false);
+            }
             state.manualHeld = false;
-            state.manualActivityTimer = 0.0f;
+            state.activityTimer = 0.0f;
             state.manualCadenceHz = 0.0f;
             state.lastManualPressAt = -1.0f;
-            state.resumeTimer = 0.15f;
             return;
         }
 
-        // Never run in the background: the user must have clicked recently.
         if (!g_config.enabled || !selected || !player->m_isShip) {
-            releaseAutomaticInput(g_activeLayer, state, isPlayer1);
-            state.manualActivityTimer = 0.0f;
-            state.manualCadenceHz = 0.0f;
+            if (state.controllerOwned) {
+                relinquishController(layer, state, isPlayer1, true);
+            }
+            state.hasVelocitySample = false;
             return;
         }
 
-        // While the physical button is down, it owns the input. Automatic
-        // pulses fill only the gaps between real clicks.
-        if (state.manualHeld) {
-            releaseAutomaticInput(g_activeLayer, state, isPlayer1);
+        const bool armed = state.manualHeld || state.activityTimer > 0.0f;
+        if (!armed) {
+            if (state.controllerOwned) {
+                relinquishController(layer, state, isPlayer1, false);
+            }
+            if (state.lastManualPressAt >= 0.0f && state.localClock - state.lastManualPressAt > 1.0f) {
+                state.manualCadenceHz = 0.0f;
+                state.lastManualPressAt = -1.0f;
+            }
+            state.hasVelocitySample = false;
             return;
         }
 
-        // A single click briefly arms assistance. Continued clicking refreshes
-        // the window; when the user stops, assistance releases and goes idle.
-        if (state.manualActivityTimer <= 0.0f) {
-            releaseAutomaticInput(g_activeLayer, state, isPlayer1);
-            state.manualCadenceHz = 0.0f;
-            return;
-        }
-
+        state.controllerOwned = true;
         if (state.resumeTimer > 0.0f) return;
 
-        // Gravity-relative velocity makes the rule work for normal/inverted
-        // gravity. The manual cadence tightens the tolerance progressively:
-        // faster real clicks make the controller more precise, not more active
-        // while the user is idle.
-        const float gravityDirection = player->m_isUpsideDown ? 1.0f : -1.0f;
-        const float gravityRelativeVelocity = player->m_yVelocity * gravityDirection;
-        const float error = gravityRelativeVelocity - g_config.targetVelocity;
-        const float baseDeadzone = deadzoneForProfile();
-        const float cadenceFactor = std::clamp(state.manualCadenceHz / 18.0f, 0.0f, 1.0f);
+        const float straightness = straightness01();
+        const float cadenceFactor = std::clamp(state.manualCadenceHz / 30.0f, 0.0f, 1.0f);
         const float alignment = std::clamp(g_config.inputAlignment, 0.0f, 1.0f);
-        const float deadzone = std::max(
-            0.04f,
-            baseDeadzone * (1.0f - 0.30f * alignment * cadenceFactor)
-        );
+        const float deadzone = effectiveVelocityDeadzone(state);
+        const float releaseZone = std::max(0.008f, deadzone * 0.62f);
 
-        // Hysteresis avoids rapid oscillation. Manual clicks and synthetic
-        // pulses are arbitrated as one button state in handleButton below.
-        bool desiredPressed = state.autoPressed;
-        if (error > deadzone) {
+        // Predict a few physics ticks ahead. The prediction horizon grows with
+        // Straightness and recent click cadence, while the measured velocity
+        // remains the primary feedback signal.
+        const float lookahead = std::clamp(
+            0.003f + 0.018f * straightness + 0.010f * alignment * cadenceFactor,
+            0.003f,
+            0.032f
+        );
+        const float velocity = gravityRelativeVelocity(player);
+        const float predictedVelocity = velocity + state.estimatedAcceleration * lookahead;
+        const float error = predictedVelocity - g_config.targetVelocity;
+
+        // Bang-bang stabilization with hysteresis: press while drifting with
+        // gravity; release after momentum has crossed the opposite threshold.
+        bool desiredPressed = state.outputPressed;
+        if (state.outputPressed) {
+            if (error < -releaseZone) desiredPressed = false;
+        } else if (error > deadzone) {
             desiredPressed = true;
-        } else if (error < -deadzone) {
-            desiredPressed = false;
         }
 
-        if (desiredPressed == state.autoPressed || state.toggleTimer > 0.0f) return;
+        if (desiredPressed != state.outputPressed && state.transitionCooldown <= 0.0f) {
+            setControllerOutput(layer, state, desiredPressed, isPlayer1);
+            // max CPS means complete press+release cycles, so each edge gets
+            // half of the cycle interval. Physics still limits this to one edge
+            // per updateJump call.
+            state.transitionCooldown = 1.0f / (2.0f * static_cast<float>(maxCps()));
+        }
 
-        setAutomaticInput(g_activeLayer, state, desiredPressed, isPlayer1);
-        state.toggleTimer = 1.0f / (2.0f * static_cast<float>(maxCps()));
+        if (g_config.debugTelemetry && state.telemetryTimer <= 0.0f) {
+            log::info(
+                "AA {}: vy={:.4f}, predicted={:.4f}, deadzone={:.4f}, output={}, manualHz={:.1f}, straightness={:.0f}%, armed={}, accel={:.3f}",
+                isPlayer1 ? "P1" : "P2",
+                velocity,
+                predictedVelocity,
+                deadzone,
+                state.outputPressed,
+                state.manualCadenceHz,
+                g_config.straightness,
+                armed,
+                state.estimatedAcceleration
+            );
+            state.telemetryTimer = 0.20f;
+        }
     }
 }
 
@@ -226,20 +340,18 @@ class $modify(AlternateAssistPlayLayer, PlayLayer) {
         alternate_assist::g_activeLayer = nullptr;
         alternate_assist::resetPlayerStates();
         const bool result = PlayLayer::init(level, useReplay, dontCreateObjects);
-        if (result) {
-            alternate_assist::g_activeLayer = this;
-        }
+        if (result) alternate_assist::g_activeLayer = this;
         return result;
     }
 
     void resetLevel() {
-        alternate_assist::releaseAllAutomaticInputs(this);
+        alternate_assist::releaseAllControllerOutputs(this);
         alternate_assist::resetPlayerStates();
         PlayLayer::resetLevel();
     }
 
     void onQuit() {
-        alternate_assist::releaseAllAutomaticInputs(this);
+        alternate_assist::releaseAllControllerOutputs(this);
         alternate_assist::resetPlayerStates();
         alternate_assist::g_activeLayer = nullptr;
         PlayLayer::onQuit();
@@ -258,48 +370,62 @@ class $modify(AlternateAssistBaseGameLayer, GJBaseGameLayer) {
         }
 
         auto& state = alternate_assist::g_players[isPlayer1 ? 0u : 1u];
-        const bool wasEffective = alternate_assist::effectiveButtonState(state);
-
         if (alternate_assist::g_injectingInput) {
-            state.autoPressed = down;
-        } else {
-            alternate_assist::noteManualInput(state, down);
+            if (!alternate_assist::g_restoringManualInput) {
+                state.outputPressed = down;
+            }
+            GJBaseGameLayer::handleButton(down, button, isPlayer1);
+            return;
         }
 
-        const bool isEffective = alternate_assist::effectiveButtonState(state);
-        // Forward only effective state transitions. A manual press can take
-        // over an automatic hold, and an automatic release cannot cancel a
-        // physical hold. This is the input-alignment/ownership guarantee.
-        if (wasEffective != isEffective) {
-            GJBaseGameLayer::handleButton(isEffective, button, isPlayer1);
+        auto* player = isPlayer1 ? activeLayer->m_player1 : activeLayer->m_player2;
+        const bool selected = isPlayer1 || alternate_assist::g_config.player2Enabled;
+        const bool captureForAssist = alternate_assist::g_config.enabled && selected &&
+            player && player->m_isShip && !player->m_isDead;
+
+        if (captureForAssist) {
+            // While assisted Ship control is active, physical edges arm the
+            // stabilizer and contribute cadence data. They are not forwarded as
+            // raw holds: otherwise a long manual hold would prevent the
+            // controller from releasing thrust to counter upward drift.
+            alternate_assist::noteManualInput(state, down);
+            state.controllerOwned = true;
+            return;
         }
+
+        if (state.controllerOwned) {
+            alternate_assist::relinquishController(activeLayer, state, isPlayer1, false);
+        }
+        state.manualHeld = down;
+        // Raw gameplay input is not controller-owned output.
+        GJBaseGameLayer::handleButton(down, button, isPlayer1);
     }
 };
 
 class $modify(AlternateAssistPlayerObject, PlayerObject) {
-    void update(float dt) {
-        PlayerObject::update(dt);
-
+    void updateJump(float dt) {
         auto* layer = alternate_assist::g_activeLayer;
-        if (!layer) return;
-
-        if (this == layer->m_player1) {
-            alternate_assist::runAssist(
-                this,
-                alternate_assist::g_players[0],
-                true,
-                true,
-                dt
+        if (layer && this == layer->m_player1) {
+            alternate_assist::runControllerBeforePhysics(
+                this, alternate_assist::g_players[0], true, true, dt
             );
-        } else if (this == layer->m_player2) {
-            alternate_assist::runAssist(
+            PlayerObject::updateJump(dt);
+            alternate_assist::observePostPhysics(this, alternate_assist::g_players[0], dt);
+            return;
+        }
+        if (layer && this == layer->m_player2) {
+            alternate_assist::runControllerBeforePhysics(
                 this,
                 alternate_assist::g_players[1],
                 alternate_assist::g_config.player2Enabled,
                 false,
                 dt
             );
+            PlayerObject::updateJump(dt);
+            alternate_assist::observePostPhysics(this, alternate_assist::g_players[1], dt);
+            return;
         }
+        PlayerObject::updateJump(dt);
     }
 };
 
@@ -310,30 +436,40 @@ $on_mod(Loaded) {
         const bool wasEnabled = alternate_assist::g_config.enabled;
         alternate_assist::g_config.enabled = value;
         if (wasEnabled && !value) {
-            alternate_assist::releaseAllAutomaticInputs(alternate_assist::g_activeLayer);
-            alternate_assist::g_players[0].manualActivityTimer = 0.0f;
-            alternate_assist::g_players[1].manualActivityTimer = 0.0f;
+            auto* layer = alternate_assist::g_activeLayer;
+            for (std::size_t i = 0; i < alternate_assist::g_players.size(); ++i) {
+                auto& state = alternate_assist::g_players[i];
+                if (state.controllerOwned) {
+                    alternate_assist::relinquishController(layer, state, i == 0, true);
+                }
+            }
         }
     });
 
     listenForSettingChanges<bool>("player2-enabled", [](bool value) {
         alternate_assist::g_config.player2Enabled = value;
         if (!value && alternate_assist::g_activeLayer) {
-            alternate_assist::releaseAutomaticInput(
-                alternate_assist::g_activeLayer,
-                alternate_assist::g_players[1],
-                false
-            );
-            alternate_assist::g_players[1].manualActivityTimer = 0.0f;
+            if (alternate_assist::g_players[1].controllerOwned) {
+                alternate_assist::relinquishController(
+                    alternate_assist::g_activeLayer,
+                    alternate_assist::g_players[1],
+                    false,
+                    true
+                );
+            }
         }
     });
 
-    listenForSettingChanges<std::string>("assist-profile", [](std::string value) {
-        alternate_assist::g_config.profile = std::move(value);
+    listenForSettingChanges<bool>("debug-telemetry", [](bool value) {
+        alternate_assist::g_config.debugTelemetry = value;
     });
 
-    listenForSettingChanges<double>("custom-deadzone", [](double value) {
-        alternate_assist::g_config.customDeadzone = static_cast<float>(value);
+    listenForSettingChanges<double>("straightness", [](double value) {
+        alternate_assist::g_config.straightness = static_cast<float>(value);
+    });
+
+    listenForSettingChanges<int64_t>("max-cps", [](int64_t value) {
+        alternate_assist::g_config.maxCps = static_cast<int>(value);
     });
 
     listenForSettingChanges<double>("target-vertical-velocity", [](double value) {
@@ -352,9 +488,5 @@ $on_mod(Loaded) {
         alternate_assist::g_config.inputAlignment = static_cast<float>(value);
     });
 
-    listenForSettingChanges<int64_t>("max-cps", [](int64_t value) {
-        alternate_assist::g_config.maxCps = static_cast<int>(value);
-    });
-
-    log::info("Alternate Assist Mod v0.1.2 loaded. Assist is gated by recent manual input.");
+    log::info("Alternate Assist Mod v0.1.3 loaded. Adaptive Ship stabilizer with manual cadence alignment.");
 }
