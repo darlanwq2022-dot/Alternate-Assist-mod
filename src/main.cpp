@@ -17,11 +17,12 @@ namespace alternate_assist {
         bool player2Enabled = false;
         bool routePlayer2JumpToPlayer1 = true;
         bool debugTelemetry = false;
-        float straightness = 95.0f;
+        bool exclusiveControl = true;
+        float straightness = 100.0f;
         float targetVelocity = 0.0f;
         float resumeDelay = 0.0f;
-        float manualActivityWindow = 0.32f;
-        float inputAlignment = 1.0f;
+        float manualActivityWindow = 0.45f;
+        float inputAlignment = 0.0f;
         int maxCps = 120;
     };
 
@@ -54,7 +55,6 @@ namespace alternate_assist {
     std::array<PlayerState, 2> g_players{};
     PlayLayer* g_activeLayer = nullptr;
     bool g_injectingInput = false;
-    bool g_restoringManualInput = false;
 
     float straightness01() {
         return std::clamp(g_config.straightness, 0.0f, 100.0f) / 100.0f;
@@ -77,31 +77,29 @@ namespace alternate_assist {
     }
 
     float baseVelocityDeadzone() {
-        // Direct Straightness mapping:
-        //   0   -> forgiving threshold (~1.18)
-        //   50  -> medium threshold (~0.47)
-        //   90  -> tight threshold (~0.08)
-        //   100 -> very tight threshold (0.03)
+        // Direct, stronger Straightness mapping:
+        //   0   -> forgiving threshold (~1.208)
+        //   50  -> medium threshold (~0.352)
+        //   90  -> tight threshold (~0.027)
+        //   100 -> ultra-tight threshold (0.008)
         const float remaining = 1.0f - straightness01();
-        return 0.03f + 1.15f * std::pow(remaining, 1.4f);
+        return 0.008f + 1.20f * std::pow(remaining, 1.8f);
     }
 
     float effectiveVelocityDeadzone(PlayerState const& state) {
         const float cadence = std::clamp(state.manualCadenceHz / 30.0f, 0.0f, 1.0f);
         const float alignment = std::clamp(g_config.inputAlignment, 0.0f, 1.0f);
-        // Faster real clicks tighten the threshold by up to 42%.
-        const float cadenceTightening = 0.42f * alignment * cadence;
-        return std::max(0.012f, baseVelocityDeadzone() * (1.0f - cadenceTightening));
+        // Click cadence can tighten the tolerance, but never schedules or
+        // synchronizes controller pulses to the user's click pattern.
+        const float cadenceTightening = 0.35f * alignment * cadence;
+        return std::max(0.004f, baseVelocityDeadzone() * (1.0f - cadenceTightening));
     }
 
     void sendControllerInput(PlayLayer* layer, bool down, bool isPlayer1) {
         if (!layer) return;
         const bool previousInjecting = g_injectingInput;
-        const bool previousRestoring = g_restoringManualInput;
         g_injectingInput = true;
-        g_restoringManualInput = false;
         layer->handleButton(down, 1, isPlayer1);
-        g_restoringManualInput = previousRestoring;
         g_injectingInput = previousInjecting;
     }
 
@@ -120,9 +118,7 @@ namespace alternate_assist {
     }
 
     void relinquishController(PlayLayer* layer, PlayerState& state, bool isPlayer1, bool preserveManualState) {
-        // Physical presses/releases are always forwarded to the normal Geode
-        // hook chain in v0.1.5. Therefore there is no synthetic "restore" press:
-        // the game and input-buffer mods already received the user's real hold.
+        const bool restorePhysicalHold = preserveManualState && state.manualHeld;
         releaseControllerOutput(layer, state, isPlayer1);
         state.controllerOwned = false;
         state.activityTimer = 0.0f;
@@ -132,6 +128,12 @@ namespace alternate_assist {
         state.hasVelocitySample = false;
         state.estimatedAcceleration = 0.0f;
 
+        // While exclusive assist is active, physical input is only an arming
+        // signal and never reaches the game. If assist is disabled or the
+        // player leaves Ship while the key is still held, restore that hold.
+        if (restorePhysicalHold && layer) {
+            sendControllerInput(layer, true, isPlayer1);
+        }
         if (!preserveManualState) {
             state.manualHeld = false;
         }
@@ -153,6 +155,7 @@ namespace alternate_assist {
         config.player2Enabled = mod->getSettingValue<bool>("player2-enabled");
         config.routePlayer2JumpToPlayer1 = mod->getSettingValue<bool>("route-player2-jump-to-player1");
         config.debugTelemetry = mod->getSettingValue<bool>("debug-telemetry");
+        config.exclusiveControl = mod->getSettingValue<bool>("exclusive-control");
         config.straightness = static_cast<float>(mod->getSettingValue<double>("straightness"));
         config.targetVelocity = static_cast<float>(mod->getSettingValue<double>("target-vertical-velocity"));
         config.resumeDelay = static_cast<float>(mod->getSettingValue<double>("manual-resume-delay"));
@@ -269,11 +272,11 @@ namespace alternate_assist {
 
         state.controllerOwned = true;
 
-        // Do not synthesize edges while the physical key is held. This keeps
-        // Nova/other input-buffer mods' raw press and release stream intact and
-        // prevents the controller from releasing a real held key underneath
-        // the player. Automatic corrections run in the gaps between manual taps.
-        if (state.manualHeld) return;
+        // Exclusive control means physical clicks only arm/maintain the assist.
+        // The controller is still allowed to press OR release during a physical
+        // hold, so irregular manual CPS cannot force the Ship into an oscillation.
+        // If exclusive control is disabled, retain the legacy gap-fill behavior.
+        if (!g_config.exclusiveControl && state.manualHeld) return;
         if (state.resumeTimer > 0.0f) return;
 
         const float straightness = straightness01();
@@ -313,7 +316,7 @@ namespace alternate_assist {
 
         if (g_config.debugTelemetry && state.telemetryTimer <= 0.0f) {
             log::info(
-                "AA {}: vy={:.4f}, predicted={:.4f}, deadzone={:.4f}, output={}, manualHz={:.1f}, straightness={:.0f}%, armed={}, manualHeld={}, accel={:.3f}, physicsCalls={}, manualEvents={}",
+                "AA {}: vy={:.4f}, predicted={:.4f}, deadzone={:.4f}, output={}, manualHz={:.1f}, straightness={:.0f}%, armed={}, manualHeld={}, exclusive={}, accel={:.3f}, physicsCalls={}, manualEvents={}",
                 isPlayer1 ? "P1" : "P2",
                 velocity,
                 predictedVelocity,
@@ -323,6 +326,7 @@ namespace alternate_assist {
                 g_config.straightness,
                 armed,
                 state.manualHeld,
+                g_config.exclusiveControl,
                 state.estimatedAcceleration,
                 state.physicsHookCalls,
                 state.manualInputEvents
@@ -371,9 +375,7 @@ class $modify(AlternateAssistBaseGameLayer, GJBaseGameLayer) {
         // pulse in dual mode could be routed to P1 accidentally.
         if (alternate_assist::g_injectingInput) {
             auto& injectedState = alternate_assist::g_players[isPlayer1 ? 0u : 1u];
-            if (!alternate_assist::g_restoringManualInput) {
-                injectedState.outputPressed = down;
-            }
+            injectedState.outputPressed = down;
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
             return;
         }
@@ -392,16 +394,20 @@ class $modify(AlternateAssistBaseGameLayer, GJBaseGameLayer) {
             player && player->m_isShip && !player->m_isDead;
 
         if (captureForAssist) {
-            // If an automatic press was active, hand the button back cleanly
-            // before a new physical press. Then forward the user's exact edge
-            // through the remaining Geode hook chain (including input buffers).
-            if (down && state.outputPressed) {
-                alternate_assist::setControllerOutput(activeLayer, state, false, effectivePlayer1);
-            }
-
             alternate_assist::noteManualInput(state, down);
             state.controllerOwned = true;
             ++state.manualInputEvents;
+
+            if (alternate_assist::g_config.exclusiveControl) {
+                // Consume physical click edges on purpose: they are the user's
+                // "assist active" signal, not Ship thrust commands. The
+                // feedback controller alone chooses the final press/release
+                // state based on vertical velocity, even while the user clicks.
+                return;
+            }
+
+            // Optional legacy mode: pass raw input through and only fill gaps.
+            state.outputPressed = down;
             GJBaseGameLayer::handleButton(down, button, effectivePlayer1);
             return;
         }
@@ -410,6 +416,7 @@ class $modify(AlternateAssistBaseGameLayer, GJBaseGameLayer) {
             alternate_assist::relinquishController(activeLayer, state, effectivePlayer1, false);
         }
         state.manualHeld = down;
+        state.outputPressed = down;
         GJBaseGameLayer::handleButton(down, button, effectivePlayer1);
     }
 };
@@ -482,6 +489,20 @@ $on_mod(Loaded) {
         alternate_assist::g_config.debugTelemetry = value;
     });
 
+    listenForSettingChanges<bool>("exclusive-control", [](bool value) {
+        alternate_assist::g_config.exclusiveControl = value;
+        if (!value && alternate_assist::g_activeLayer) {
+            for (std::size_t i = 0; i < alternate_assist::g_players.size(); ++i) {
+                auto& state = alternate_assist::g_players[i];
+                if (state.controllerOwned) {
+                    alternate_assist::relinquishController(
+                        alternate_assist::g_activeLayer, state, i == 0, true
+                    );
+                }
+            }
+        }
+    });
+
     listenForSettingChanges<double>("straightness", [](double value) {
         alternate_assist::g_config.straightness = static_cast<float>(value);
     });
@@ -506,5 +527,5 @@ $on_mod(Loaded) {
         alternate_assist::g_config.inputAlignment = static_cast<float>(value);
     });
 
-    log::info("Alternate Assist Mod v0.1.5 loaded. Raw manual inputs are forwarded through the Geode hook chain; Ship assist fills released gaps.");
+    log::info("Alternate Assist Mod v0.1.6 loaded. Exclusive straight-fly controller consumes manual click edges as an activation signal and owns Ship press/release while armed.");
 }

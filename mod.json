@@ -5,9 +5,9 @@
   },
   "id": "dev.alternateassist.mod",
   "name": "Alternate Assist Mod",
-  "version": "v0.1.5",
+  "version": "v0.1.6",
   "developer": "Alternate Assist Team",
-  "description": "Adaptive Ship stabilizer with Up Arrow compatibility and raw input-chain forwarding for compatibility with input-buffer mods.",
+  "description": "Exclusive adaptive Ship straight-fly controller. Manual clicks arm the stabilizer; feedback control independently selects press/release to minimize vertical velocity.",
   "settings": {
     "main-header": {
       "type": "title",
@@ -16,14 +16,20 @@
     "assist-enabled": {
       "type": "bool",
       "name": "Enable Ship Assist",
-      "description": "Manual presses and releases are forwarded to the game and other Geode hooks. The stabilizer adds corrections only in the released gaps while manual activity remains armed.",
+      "description": "When enabled, your physical presses/clicks arm the stabilizer. In Exclusive Ship Control mode, raw click timing is not sent to Ship movement; the controller independently selects press/release from measured vertical velocity.",
       "default": false
+    },
+    "exclusive-control": {
+      "type": "bool",
+      "name": "Exclusive Ship Control (Straight Fly)",
+      "description": "ON: physical clicks only arm/maintain assist; raw click timing is consumed and the stabilizer independently controls Ship press/release while armed. OFF: legacy behavior forwards physical input and only adds corrections in released gaps.",
+      "default": true
     },
     "straightness": {
       "type": "float",
       "name": "Straightness",
-      "description": "Main control. 0 = loose correction, 100 = extremely tight horizontal-velocity correction. Higher values shrink the vertical-velocity deadzone directly.",
-      "default": 95.0,
+      "description": "Main straight-fly precision control. Higher values sharply reduce tolerated gravity-relative vertical velocity. 100 targets an ultra-tight horizontal velocity band.",
+      "default": 100.0,
       "min": 0.0,
       "max": 100.0,
       "control": {
@@ -33,7 +39,7 @@
     "max-cps": {
       "type": "int",
       "name": "Maximum CPS",
-      "description": "Maximum complete automatic press/release cycles per second. Higher values allow faster correction; physics updates still set the real limit.",
+      "description": "Maximum automatic full press/release cycles per second. This controls the stabilizer output, not your physical click speed. The actual limit is also bounded by the game's physics update rate.",
       "default": 120,
       "min": 1,
       "max": 120,
@@ -55,8 +61,8 @@
     "manual-activity-window": {
       "type": "float",
       "name": "Manual Activity Window",
-      "description": "How long stabilization remains armed after your latest physical click. Repeated clicks refresh the window; corrections are made between physical holds.",
-      "default": 0.32,
+      "description": "How long the stabilizer stays armed after the most recent physical press/release. Your clicks only keep assistance active; they do not determine the automatic pulse rhythm.",
+      "default": 0.45,
       "min": 0.05,
       "max": 1.0,
       "control": {
@@ -66,8 +72,8 @@
     "input-alignment": {
       "type": "float",
       "name": "Manual Click Alignment",
-      "description": "How strongly faster manual click cadence tightens the velocity deadzone. At 100%, fast clicking can tighten the correction threshold by up to 42%.",
-      "default": 1.0,
+      "description": "Optional influence of your recent click rate on the velocity tolerance only. It never synchronizes automatic press/release timing to your physical clicks. Set to 0 for fully click-independent correction.",
+      "default": 0.0,
       "min": 0.0,
       "max": 1.0,
       "control": {
@@ -77,7 +83,7 @@
     "manual-resume-delay": {
       "type": "float",
       "name": "Correction Resume Delay",
-      "description": "Optional pause after a physical release before the controller resumes corrections. 0 gives immediate correction.",
+      "description": "Optional delay before the controller resumes after a physical release. Use 0 for immediate straight-fly correction.",
       "default": 0.0,
       "min": 0.0,
       "max": 0.25,
@@ -108,7 +114,7 @@
     "debug-telemetry": {
       "type": "bool",
       "name": "Debug Controller Telemetry",
-      "description": "Logs Ship velocity, controller state, physics hook call count, and forwarded manual input event count. Use this to check whether Alternate Assist physics/input hooks are being reached.",
+      "description": "Logs vertical velocity, predicted velocity, desired controller output, exclusive-control state, physics hook calls, and physical input event count.",
       "default": false
     }
   }
