@@ -5,9 +5,9 @@
   },
   "id": "dev.alternateassist.mod",
   "name": "Alternate Assist Mod",
-  "version": "v0.1.4",
+  "version": "v0.1.5",
   "developer": "Alternate Assist Team",
-  "description": "Adaptive Ship stabilizer with configurable straightness, manual click alignment, and single-player Up Arrow/P2-to-P1 input compatibility.",
+  "description": "Adaptive Ship stabilizer with Up Arrow compatibility and raw input-chain forwarding for compatibility with input-buffer mods.",
   "settings": {
     "main-header": {
       "type": "title",
@@ -16,7 +16,7 @@
     "assist-enabled": {
       "type": "bool",
       "name": "Enable Ship Assist",
-      "description": "When enabled in Ship mode, your clicks arm the stabilizer. The controller then manages press/release to keep vertical velocity near the selected target. It disengages after the activity window expires.",
+      "description": "Manual presses and releases are forwarded to the game and other Geode hooks. The stabilizer adds corrections only in the released gaps while manual activity remains armed.",
       "default": false
     },
     "straightness": {
@@ -55,7 +55,7 @@
     "manual-activity-window": {
       "type": "float",
       "name": "Manual Activity Window",
-      "description": "How long stabilization remains armed after your latest physical click. Holding the button keeps it active; when you stop clicking and release, it disengages after this window.",
+      "description": "How long stabilization remains armed after your latest physical click. Repeated clicks refresh the window; corrections are made between physical holds.",
       "default": 0.32,
       "min": 0.05,
       "max": 1.0,
@@ -108,7 +108,7 @@
     "debug-telemetry": {
       "type": "bool",
       "name": "Debug Controller Telemetry",
-      "description": "Logs measured and predicted vertical velocity, effective deadzone, controller output, measured manual CPS, Straightness, and estimated acceleration.",
+      "description": "Logs Ship velocity, controller state, physics hook call count, and forwarded manual input event count. Use this to check whether Alternate Assist physics/input hooks are being reached.",
       "default": false
     }
   }

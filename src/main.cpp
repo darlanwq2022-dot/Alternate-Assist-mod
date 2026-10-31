@@ -44,6 +44,8 @@ namespace alternate_assist {
 
         float lastGravityRelativeVelocity = 0.0f;
         float estimatedAcceleration = 0.0f;
+        uint32_t physicsHookCalls = 0;
+        uint32_t manualInputEvents = 0;
         bool hasVelocitySample = false;
         bool lastUpsideDown = false;
     };
@@ -103,17 +105,6 @@ namespace alternate_assist {
         g_injectingInput = previousInjecting;
     }
 
-    void restoreManualHeldInput(PlayLayer* layer, bool isPlayer1) {
-        if (!layer) return;
-        const bool previousInjecting = g_injectingInput;
-        const bool previousRestoring = g_restoringManualInput;
-        g_injectingInput = true;
-        g_restoringManualInput = true;
-        layer->handleButton(true, 1, isPlayer1);
-        g_restoringManualInput = previousRestoring;
-        g_injectingInput = previousInjecting;
-    }
-
     void setControllerOutput(PlayLayer* layer, PlayerState& state, bool down, bool isPlayer1) {
         if (!layer || state.outputPressed == down) return;
         sendControllerInput(layer, down, isPlayer1);
@@ -128,8 +119,10 @@ namespace alternate_assist {
         state.transitionCooldown = 0.0f;
     }
 
-    void relinquishController(PlayLayer* layer, PlayerState& state, bool isPlayer1, bool restoreHeldInput) {
-        const bool wasManuallyHeld = state.manualHeld;
+    void relinquishController(PlayLayer* layer, PlayerState& state, bool isPlayer1, bool preserveManualState) {
+        // Physical presses/releases are always forwarded to the normal Geode
+        // hook chain in v0.1.5. Therefore there is no synthetic "restore" press:
+        // the game and input-buffer mods already received the user's real hold.
         releaseControllerOutput(layer, state, isPlayer1);
         state.controllerOwned = false;
         state.activityTimer = 0.0f;
@@ -139,14 +132,7 @@ namespace alternate_assist {
         state.hasVelocitySample = false;
         state.estimatedAcceleration = 0.0f;
 
-        // If assist is disabled or a portal leaves Ship mode during a physical
-        // hold, restore the user's normal held input instead of swallowing it.
-        if (restoreHeldInput && wasManuallyHeld && layer) {
-            // Restore the physical hold to vanilla gameplay, but do not mark it
-            // as controller-owned output. This prevents a per-physics-step
-            // release/restore loop after leaving Ship mode or disabling assist.
-            restoreManualHeldInput(layer, isPlayer1);
-        } else if (!restoreHeldInput) {
+        if (!preserveManualState) {
             state.manualHeld = false;
         }
     }
@@ -282,6 +268,12 @@ namespace alternate_assist {
         }
 
         state.controllerOwned = true;
+
+        // Do not synthesize edges while the physical key is held. This keeps
+        // Nova/other input-buffer mods' raw press and release stream intact and
+        // prevents the controller from releasing a real held key underneath
+        // the player. Automatic corrections run in the gaps between manual taps.
+        if (state.manualHeld) return;
         if (state.resumeTimer > 0.0f) return;
 
         const float straightness = straightness01();
@@ -321,7 +313,7 @@ namespace alternate_assist {
 
         if (g_config.debugTelemetry && state.telemetryTimer <= 0.0f) {
             log::info(
-                "AA {}: vy={:.4f}, predicted={:.4f}, deadzone={:.4f}, output={}, manualHz={:.1f}, straightness={:.0f}%, armed={}, accel={:.3f}",
+                "AA {}: vy={:.4f}, predicted={:.4f}, deadzone={:.4f}, output={}, manualHz={:.1f}, straightness={:.0f}%, armed={}, manualHeld={}, accel={:.3f}, physicsCalls={}, manualEvents={}",
                 isPlayer1 ? "P1" : "P2",
                 velocity,
                 predictedVelocity,
@@ -330,7 +322,10 @@ namespace alternate_assist {
                 state.manualCadenceHz,
                 g_config.straightness,
                 armed,
-                state.estimatedAcceleration
+                state.manualHeld,
+                state.estimatedAcceleration,
+                state.physicsHookCalls,
+                state.manualInputEvents
             );
             state.telemetryTimer = 0.20f;
         }
@@ -397,8 +392,17 @@ class $modify(AlternateAssistBaseGameLayer, GJBaseGameLayer) {
             player && player->m_isShip && !player->m_isDead;
 
         if (captureForAssist) {
+            // If an automatic press was active, hand the button back cleanly
+            // before a new physical press. Then forward the user's exact edge
+            // through the remaining Geode hook chain (including input buffers).
+            if (down && state.outputPressed) {
+                alternate_assist::setControllerOutput(activeLayer, state, false, effectivePlayer1);
+            }
+
             alternate_assist::noteManualInput(state, down);
             state.controllerOwned = true;
+            ++state.manualInputEvents;
+            GJBaseGameLayer::handleButton(down, button, effectivePlayer1);
             return;
         }
 
@@ -414,6 +418,7 @@ class $modify(AlternateAssistPlayerObject, PlayerObject) {
     void updateJump(float dt) {
         auto* layer = alternate_assist::g_activeLayer;
         if (layer && this == layer->m_player1) {
+            ++alternate_assist::g_players[0].physicsHookCalls;
             alternate_assist::runControllerBeforePhysics(
                 this, alternate_assist::g_players[0], true, true, dt
             );
@@ -422,6 +427,7 @@ class $modify(AlternateAssistPlayerObject, PlayerObject) {
             return;
         }
         if (layer && this == layer->m_player2) {
+            ++alternate_assist::g_players[1].physicsHookCalls;
             alternate_assist::runControllerBeforePhysics(
                 this,
                 alternate_assist::g_players[1],
@@ -500,5 +506,5 @@ $on_mod(Loaded) {
         alternate_assist::g_config.inputAlignment = static_cast<float>(value);
     });
 
-    log::info("Alternate Assist Mod v0.1.4 loaded. Up-arrow single-player routing and adaptive Ship stabilizer.");
+    log::info("Alternate Assist Mod v0.1.5 loaded. Raw manual inputs are forwarded through the Geode hook chain; Ship assist fills released gaps.");
 }
