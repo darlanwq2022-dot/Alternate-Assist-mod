@@ -5,9 +5,9 @@
   },
   "id": "dev.alternateassist.mod",
   "name": "Alternate Assist Mod",
-  "version": "v0.1.6",
+  "version": "v0.1.7",
   "developer": "Alternate Assist Team",
-  "description": "Exclusive adaptive Ship straight-fly controller. Manual clicks arm the stabilizer; feedback control independently selects press/release to minimize vertical velocity.",
+  "description": "Threshold-triggered Ship cadence assist. Native inputs pass through until manual CPS reaches a configurable threshold, then a fixed-CPS pulse controller takes over and adaptively balances press duty to stabilize vertical velocity.",
   "settings": {
     "main-header": {
       "type": "title",
@@ -16,19 +16,35 @@
     "assist-enabled": {
       "type": "bool",
       "name": "Enable Ship Assist",
-      "description": "When enabled, your physical presses/clicks arm the stabilizer. In Exclusive Ship Control mode, raw click timing is not sent to Ship movement; the controller independently selects press/release from measured vertical velocity.",
+      "description": "Below the Manual Trigger CPS threshold, Ship inputs pass through normally. Once your manual click rate reaches the threshold for two consecutive intervals, the mod switches to an independent fixed-cadence controller.",
       "default": false
     },
-    "exclusive-control": {
-      "type": "bool",
-      "name": "Exclusive Ship Control (Straight Fly)",
-      "description": "ON: physical clicks only arm/maintain assist; raw click timing is consumed and the stabilizer independently controls Ship press/release while armed. OFF: legacy behavior forwards physical input and only adds corrections in released gaps.",
-      "default": true
+    "trigger-cps": {
+      "type": "float",
+      "name": "Manual Trigger CPS",
+      "description": "Manual press frequency required to activate cadence assist. Default 5 CPS. Two consecutive press intervals must meet or exceed this threshold.",
+      "default": 5.0,
+      "min": 2.0,
+      "max": 10.0,
+      "control": {
+        "slider": true
+      }
+    },
+    "assist-cps": {
+      "type": "float",
+      "name": "Assist CPS",
+      "description": "Fixed automatic full press/release cycles per second after activation. Default 16 CPS. Your manual click timing does not change this cadence. Practical maximum is 30 CPS.",
+      "default": 16.0,
+      "min": 1.0,
+      "max": 30.0,
+      "control": {
+        "slider": true
+      }
     },
     "straightness": {
       "type": "float",
-      "name": "Straightness",
-      "description": "Main straight-fly precision control. Higher values sharply reduce tolerated gravity-relative vertical velocity. 100 targets an ultra-tight horizontal velocity band.",
+      "name": "Straightness / Feedback Strength",
+      "description": "Controls how strongly vertical velocity feedback adjusts the press portion of each fixed-CPS cycle. Higher values make duty-cycle corrections more aggressive.",
       "default": 100.0,
       "min": 0.0,
       "max": 100.0,
@@ -36,13 +52,13 @@
         "slider": true
       }
     },
-    "max-cps": {
-      "type": "int",
-      "name": "Maximum CPS",
-      "description": "Maximum automatic full press/release cycles per second. This controls the stabilizer output, not your physical click speed. The actual limit is also bounded by the game's physics update rate.",
-      "default": 120,
-      "min": 1,
-      "max": 120,
+    "base-duty": {
+      "type": "float",
+      "name": "Base Pulse Duty (%)",
+      "description": "Neutral percentage of each automatic cycle spent pressing. Feedback adjusts around this base. Start at 50%; tune only if the Ship consistently drifts up or down.",
+      "default": 50.0,
+      "min": 20.0,
+      "max": 80.0,
       "control": {
         "slider": true
       }
@@ -50,7 +66,7 @@
     "target-vertical-velocity": {
       "type": "float",
       "name": "Target Vertical Velocity",
-      "description": "Target gravity-relative vertical velocity. 0 targets horizontal flight; positive/negative values allow a controlled slow drift.",
+      "description": "Desired gravity-relative vertical velocity. 0 aims for horizontal flight.",
       "default": 0.0,
       "min": -3.0,
       "max": 3.0,
@@ -60,41 +76,19 @@
     },
     "manual-activity-window": {
       "type": "float",
-      "name": "Manual Activity Window",
-      "description": "How long the stabilizer stays armed after the most recent physical press/release. Your clicks only keep assistance active; they do not determine the automatic pulse rhythm.",
+      "name": "Assist Hold After Last Click (s)",
+      "description": "How long cadence assist remains armed after the last manual press/release. A held key also keeps it active until released.",
       "default": 0.45,
-      "min": 0.05,
-      "max": 1.0,
-      "control": {
-        "slider": true
-      }
-    },
-    "input-alignment": {
-      "type": "float",
-      "name": "Manual Click Alignment",
-      "description": "Optional influence of your recent click rate on the velocity tolerance only. It never synchronizes automatic press/release timing to your physical clicks. Set to 0 for fully click-independent correction.",
-      "default": 0.0,
-      "min": 0.0,
-      "max": 1.0,
-      "control": {
-        "slider": true
-      }
-    },
-    "manual-resume-delay": {
-      "type": "float",
-      "name": "Correction Resume Delay",
-      "description": "Optional delay before the controller resumes after a physical release. Use 0 for immediate straight-fly correction.",
-      "default": 0.0,
-      "min": 0.0,
-      "max": 0.25,
+      "min": 0.1,
+      "max": 1.5,
       "control": {
         "slider": true
       }
     },
     "route-player2-jump-to-player1": {
       "type": "bool",
-      "name": "Route Player 2 Jump to Player 1 in Single-Player",
-      "description": "Compatibility option for keymaps where Up Arrow is bound to Jump P2. In non-dual levels, routes P2 primary jump input to Player 1 so Up Arrow controls your Ship. Automatically leaves P2 untouched in dual mode.",
+      "name": "Route Up Arrow / Player 2 Jump to Player 1 in Single-Player",
+      "description": "In non-dual levels, routes P2 jump input to P1 so Up Arrow can control Player 1 when the keybind is mapped to Jump P2. Dual mode preserves P2.",
       "default": true
     },
     "player2-header": {
@@ -104,7 +98,7 @@
     "player2-enabled": {
       "type": "bool",
       "name": "Enable Player 2 Assist",
-      "description": "Enables the same controller for Player 2 in dual mode. Disabled by default.",
+      "description": "Enables threshold-triggered cadence assist for Player 2 in dual mode.",
       "default": false
     },
     "diagnostics-header": {
@@ -114,7 +108,7 @@
     "debug-telemetry": {
       "type": "bool",
       "name": "Debug Controller Telemetry",
-      "description": "Logs vertical velocity, predicted velocity, desired controller output, exclusive-control state, physics hook calls, and physical input event count.",
+      "description": "Logs manual CPS, trigger threshold, fixed assist CPS, phase, duty cycle, vertical velocity, physics hook calls and manual input events.",
       "default": false
     }
   }

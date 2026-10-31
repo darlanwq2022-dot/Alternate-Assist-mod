@@ -1,39 +1,36 @@
-# Alternate Assist Mod v0.1.6 — True Straight-Fly Control
+# Alternate Assist Mod v0.1.7 — CPS Threshold + Fixed Cadence
 
 Target: Windows · Geometry Dash 2.2081 · Geode 5.11.2.
 
-## What changed in v0.1.6
+## What changed
 
-The previous versions forwarded physical click press/release edges to the game and paused the controller while the physical key was held. That meant the Ship still followed the player's click pattern, and the stabilizer could only add pulses between clicks. This is why irregular clicking could keep producing an oscillating flight path.
+v0.1.7 replaces the previous always-exclusive input takeover with a threshold-gated state machine:
 
-v0.1.6 adds **Exclusive Ship Control (Straight Fly)**, enabled by default. While the player is in Ship mode and assist is armed:
+1. **Below the Manual Trigger CPS threshold:** physical Ship press/release events are forwarded normally to Geometry Dash and other hooks. The Ship therefore remains usable even when Alternate Assist is enabled.
+2. **Activation threshold:** the mod measures physical press-edge frequency. Two consecutive press intervals at or above approximately 90% of the configured threshold (default 5 CPS) activate cadence assist. The 10% tolerance compensates for input timing quantization on frame-based sampling. The threshold-crossing press is consumed and replaced by the generated cadence.
+3. **Fixed Assist CPS:** once active, the controller generates a fixed number of complete press/release cycles per second (default 16 CPS). Physical clicks only refresh the activity window; their rhythm does not set or phase-lock the generated cadence.
+4. **Adaptive duty feedback:** the cycle frequency stays fixed, while the percentage of each cycle spent pressed is adjusted using gravity-relative vertical velocity. This is intended to correct consistent upward/downward drift.
+5. **Automatic hand-back:** when the key is released and no new manual edges arrive for the configured activity window, the synthetic press is released and native input pass-through resumes.
 
-- Physical press/release events are consumed by Alternate Assist and used only to arm/refresh the assist activity window.
-- The raw human click rhythm is not used as Ship thrust.
-- The feedback controller continues running during physical holds and chooses the final press/release state from gravity-relative vertical velocity and an acceleration estimate.
-- The controller can press OR release even while the user is physically holding/clicking, so the Ship can remain stable independently of the user's click pattern.
-- When the user stops clicking and the activity window expires, controller output is released. If assist is disabled or the player leaves Ship during a physical hold, the held input is restored.
-
-The Straightness slider now maps much more aggressively: 100% corresponds to an approximately 0.008 velocity deadzone before cadence tightening. Hysteresis remains to reduce rapid chatter. Maximum CPS controls the controller's own pulse rate and is not tied to the user's CPS.
-
-## Important compatibility note
-
-Exclusive control intentionally consumes the raw physical Ship press/release event inside Alternate Assist, because passing that raw event to the game would make the Ship follow the user's oscillating click pattern again. This means other input-buffer mods that require raw `handleButton` events may not be able to buffer those same physical events while Exclusive Ship Control is active. Test Alternate Assist by itself first. If Nova/C​​BF is required, use the legacy mode (Exclusive Ship Control OFF) to pass raw inputs through, but that mode cannot guarantee straight fly against arbitrary manual click timing.
-
-The Up Arrow routing option remains: if the key map sends Up Arrow as Player 2 jump in a single-player level, Alternate Assist routes it to Player 1. Dual levels preserve the normal Player 2 route.
-
-## Suggested initial settings
+## Recommended first test
 
 - Enable Ship Assist: ON
-- Exclusive Ship Control: ON
-- Straightness: 100
-- Maximum CPS: 120
-- Manual Activity Window: 0.45 s
+- Manual Trigger CPS: 5
+- Assist CPS: 16
+- Straightness / Feedback Strength: 100
+- Base Pulse Duty: 50%
 - Target Vertical Velocity: 0
-- Manual Click Alignment: 0 initially (fully independent of click cadence)
-- Correction Resume Delay: 0
+- Assist Hold After Last Click: 0.45 s
+- Up Arrow routing: ON if your Up Arrow is bound to Jump P2
 
-Click or hold the jump key to arm and keep the stabilizer active. The controller, not the key pattern, determines thrust while armed. Stop clicking to let the activity window expire and hand control back.
+Start clicking at roughly 5 CPS. The first slower clicks remain native. After two consecutive press intervals meet the threshold, Alternate Assist switches to 16 CPS generated cycles. Change Assist CPS to tune the cadence; change Base Pulse Duty only if it repeatedly drifts in one direction.
+
+## Important notes
+
+- Assist CPS means complete press+release cycles per second, not individual button edges. A 16 CPS setting therefore produces up to 32 state transitions per second, subject to the game's physics update rate.
+- The practical maximum is capped at 30 cycles/s to avoid requesting a cadence that common 60 Hz physics updates cannot represent reliably.
+- Input-buffer mods may not buffer the physical events while cadence mode is active, because those events are intentionally consumed and replaced by generated press/release events. Below the threshold, native inputs are forwarded normally.
+- The controller changes Ship input duty, not player position or velocity directly. A perfectly horizontal result is not guaranteed by one fixed CPS value across every gravity, speed, portal and physics configuration; tune Assist CPS and Base Pulse Duty in-game.
 
 ## Build
 
