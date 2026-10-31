@@ -15,6 +15,7 @@ namespace alternate_assist {
     struct Config {
         bool enabled = false;
         bool player2Enabled = false;
+        bool routePlayer2JumpToPlayer1 = true;
         bool debugTelemetry = false;
         float straightness = 95.0f;
         float targetVelocity = 0.0f;
@@ -164,6 +165,7 @@ namespace alternate_assist {
         Config config;
         config.enabled = mod->getSettingValue<bool>("assist-enabled");
         config.player2Enabled = mod->getSettingValue<bool>("player2-enabled");
+        config.routePlayer2JumpToPlayer1 = mod->getSettingValue<bool>("route-player2-jump-to-player1");
         config.debugTelemetry = mod->getSettingValue<bool>("debug-telemetry");
         config.straightness = static_cast<float>(mod->getSettingValue<double>("straightness"));
         config.targetVelocity = static_cast<float>(mod->getSettingValue<double>("target-vertical-velocity"));
@@ -364,41 +366,47 @@ class $modify(AlternateAssistBaseGameLayer, GJBaseGameLayer) {
         const bool isActivePlayLayer = activeLayer &&
             static_cast<GJBaseGameLayer*>(activeLayer) == this;
 
-        if (button != 1 || !isActivePlayLayer) {
+        if (!isActivePlayLayer || button != 1) {
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
             return;
         }
 
-        auto& state = alternate_assist::g_players[isPlayer1 ? 0u : 1u];
+        // Synthetic controller input must preserve its explicit player target.
+        // Do this before the physical-key remap below, otherwise a P2 assist
+        // pulse in dual mode could be routed to P1 accidentally.
         if (alternate_assist::g_injectingInput) {
+            auto& injectedState = alternate_assist::g_players[isPlayer1 ? 0u : 1u];
             if (!alternate_assist::g_restoringManualInput) {
-                state.outputPressed = down;
+                injectedState.outputPressed = down;
             }
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
             return;
         }
 
-        auto* player = isPlayer1 ? activeLayer->m_player1 : activeLayer->m_player2;
-        const bool selected = isPlayer1 || alternate_assist::g_config.player2Enabled;
+        // Geode's common keyboard defaults bind Up to Jump P2, while Space/W
+        // are Jump P1. In a non-dual level, route that otherwise-unused P2
+        // jump edge to P1. Dual mode keeps the original P2 routing untouched.
+        const bool remapP2ToP1 = !isPlayer1 &&
+            alternate_assist::g_config.routePlayer2JumpToPlayer1 &&
+            !activeLayer->m_gameState.m_isDualMode;
+        const bool effectivePlayer1 = isPlayer1 || remapP2ToP1;
+        auto& state = alternate_assist::g_players[effectivePlayer1 ? 0u : 1u];
+        auto* player = effectivePlayer1 ? activeLayer->m_player1 : activeLayer->m_player2;
+        const bool selected = effectivePlayer1 || alternate_assist::g_config.player2Enabled;
         const bool captureForAssist = alternate_assist::g_config.enabled && selected &&
             player && player->m_isShip && !player->m_isDead;
 
         if (captureForAssist) {
-            // While assisted Ship control is active, physical edges arm the
-            // stabilizer and contribute cadence data. They are not forwarded as
-            // raw holds: otherwise a long manual hold would prevent the
-            // controller from releasing thrust to counter upward drift.
             alternate_assist::noteManualInput(state, down);
             state.controllerOwned = true;
             return;
         }
 
         if (state.controllerOwned) {
-            alternate_assist::relinquishController(activeLayer, state, isPlayer1, false);
+            alternate_assist::relinquishController(activeLayer, state, effectivePlayer1, false);
         }
         state.manualHeld = down;
-        // Raw gameplay input is not controller-owned output.
-        GJBaseGameLayer::handleButton(down, button, isPlayer1);
+        GJBaseGameLayer::handleButton(down, button, effectivePlayer1);
     }
 };
 
@@ -460,6 +468,10 @@ $on_mod(Loaded) {
         }
     });
 
+    listenForSettingChanges<bool>("route-player2-jump-to-player1", [](bool value) {
+        alternate_assist::g_config.routePlayer2JumpToPlayer1 = value;
+    });
+
     listenForSettingChanges<bool>("debug-telemetry", [](bool value) {
         alternate_assist::g_config.debugTelemetry = value;
     });
@@ -488,5 +500,5 @@ $on_mod(Loaded) {
         alternate_assist::g_config.inputAlignment = static_cast<float>(value);
     });
 
-    log::info("Alternate Assist Mod v0.1.3 loaded. Adaptive Ship stabilizer with manual cadence alignment.");
+    log::info("Alternate Assist Mod v0.1.4 loaded. Up-arrow single-player routing and adaptive Ship stabilizer.");
 }

@@ -5,9 +5,9 @@
   },
   "id": "dev.alternateassist.mod",
   "name": "Alternate Assist Mod",
-  "version": "v0.1.3",
+  "version": "v0.1.4",
   "developer": "Alternate Assist Team",
-  "description": "Manual-activated adaptive Ship stabilizer. Captures manual clicks while in Ship mode, then controls press/release from vertical-velocity feedback. Straightness and click-cadence alignment are configurable.",
+  "description": "Adaptive Ship stabilizer with configurable straightness, manual click alignment, and single-player Up Arrow/P2-to-P1 input compatibility.",
   "settings": {
     "main-header": {
       "type": "title",
@@ -84,6 +84,12 @@
       "control": {
         "slider": true
       }
+    },
+    "route-player2-jump-to-player1": {
+      "type": "bool",
+      "name": "Route Player 2 Jump to Player 1 in Single-Player",
+      "description": "Compatibility option for keymaps where Up Arrow is bound to Jump P2. In non-dual levels, routes P2 primary jump input to Player 1 so Up Arrow controls your Ship. Automatically leaves P2 untouched in dual mode.",
+      "default": true
     },
     "player2-header": {
       "type": "title",
