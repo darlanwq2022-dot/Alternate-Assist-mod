@@ -5,9 +5,9 @@
   },
   "id": "dev.alternateassist.mod",
   "name": "Alternate Assist Mod",
-  "version": "v0.1.7",
+  "version": "v0.1.8",
   "developer": "Alternate Assist Team",
-  "description": "Threshold-triggered Ship cadence assist. Native inputs pass through until manual CPS reaches a configurable threshold, then a fixed-CPS pulse controller takes over and adaptively balances press duty to stabilize vertical velocity.",
+  "description": "Threshold-gated legacy Ship straight-flight controller. Native clicks pass through below the configured CPS trigger; above threshold, the original velocity-hysteresis press/release controller takes over independently of manual click timing.",
   "settings": {
     "main-header": {
       "type": "title",
@@ -16,13 +16,13 @@
     "assist-enabled": {
       "type": "bool",
       "name": "Enable Ship Assist",
-      "description": "Below the Manual Trigger CPS threshold, Ship inputs pass through normally. Once your manual click rate reaches the threshold for two consecutive intervals, the mod switches to an independent fixed-cadence controller.",
+      "description": "Below Manual Trigger CPS, all Ship input passes through normally. Above the threshold, the original velocity-feedback controller takes over.",
       "default": false
     },
     "trigger-cps": {
       "type": "float",
       "name": "Manual Trigger CPS",
-      "description": "Manual press frequency required to activate cadence assist. Default 5 CPS. Two consecutive press intervals must meet or exceed this threshold.",
+      "description": "Manual press frequency required to activate the assist. Two consecutive press intervals must meet this threshold.",
       "default": 5.0,
       "min": 2.0,
       "max": 10.0,
@@ -30,21 +30,21 @@
         "slider": true
       }
     },
-    "assist-cps": {
-      "type": "float",
-      "name": "Assist CPS",
-      "description": "Fixed automatic full press/release cycles per second after activation. Default 16 CPS. Your manual click timing does not change this cadence. Practical maximum is 30 CPS.",
-      "default": 16.0,
-      "min": 1.0,
-      "max": 30.0,
+    "max-cps": {
+      "type": "int",
+      "name": "Maximum Assist CPS",
+      "description": "Limits controller press/release switching. It does not force a fixed CPS; corrections are driven by actual vertical velocity.",
+      "default": 30,
+      "min": 1,
+      "max": 60,
       "control": {
         "slider": true
       }
     },
     "straightness": {
       "type": "float",
-      "name": "Straightness / Feedback Strength",
-      "description": "Controls how strongly vertical velocity feedback adjusts the press portion of each fixed-CPS cycle. Higher values make duty-cycle corrections more aggressive.",
+      "name": "Straightness",
+      "description": "100% reproduces the original Extreme Straight deadzone (0.18). Lower values widen the velocity deadzone and make corrections less aggressive.",
       "default": 100.0,
       "min": 0.0,
       "max": 100.0,
@@ -52,21 +52,10 @@
         "slider": true
       }
     },
-    "base-duty": {
-      "type": "float",
-      "name": "Base Pulse Duty (%)",
-      "description": "Neutral percentage of each automatic cycle spent pressing. Feedback adjusts around this base. Start at 50%; tune only if the Ship consistently drifts up or down.",
-      "default": 50.0,
-      "min": 20.0,
-      "max": 80.0,
-      "control": {
-        "slider": true
-      }
-    },
     "target-vertical-velocity": {
       "type": "float",
       "name": "Target Vertical Velocity",
-      "description": "Desired gravity-relative vertical velocity. 0 aims for horizontal flight.",
+      "description": "Desired gravity-relative vertical velocity. Zero targets horizontal flight.",
       "default": 0.0,
       "min": -3.0,
       "max": 3.0,
@@ -77,7 +66,7 @@
     "manual-activity-window": {
       "type": "float",
       "name": "Assist Hold After Last Click (s)",
-      "description": "How long cadence assist remains armed after the last manual press/release. A held key also keeps it active until released.",
+      "description": "How long the controller remains armed after the last manual click. A physically held key keeps it armed until release.",
       "default": 0.45,
       "min": 0.1,
       "max": 1.5,
@@ -88,7 +77,7 @@
     "route-player2-jump-to-player1": {
       "type": "bool",
       "name": "Route Up Arrow / Player 2 Jump to Player 1 in Single-Player",
-      "description": "In non-dual levels, routes P2 jump input to P1 so Up Arrow can control Player 1 when the keybind is mapped to Jump P2. Dual mode preserves P2.",
+      "description": "In single-player levels, route P2 jump events to P1 so Up Arrow can control Player 1 when mapped to Jump P2. Dual levels keep P2 independent.",
       "default": true
     },
     "player2-header": {
@@ -98,7 +87,7 @@
     "player2-enabled": {
       "type": "bool",
       "name": "Enable Player 2 Assist",
-      "description": "Enables threshold-triggered cadence assist for Player 2 in dual mode.",
+      "description": "Enables threshold-gated assistance for Player 2 in dual levels.",
       "default": false
     },
     "diagnostics-header": {
@@ -108,7 +97,7 @@
     "debug-telemetry": {
       "type": "bool",
       "name": "Debug Controller Telemetry",
-      "description": "Logs manual CPS, trigger threshold, fixed assist CPS, phase, duty cycle, vertical velocity, physics hook calls and manual input events.",
+      "description": "Logs manual CPS, threshold, selected deadzone, vertical velocity, automatic input state, update calls, and manual event count.",
       "default": false
     }
   }
